@@ -320,7 +320,10 @@ export interface CorrelationResponse {
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+export const API_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/+$/, '')
+  : '';
+const API_BASE = API_URL;
 const RECENT_DATASETS_KEY = 'cleaniq_recent_datasets';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────

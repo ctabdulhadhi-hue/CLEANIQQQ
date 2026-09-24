@@ -45,9 +45,24 @@ app = FastAPI(
 )
 
 # CORS configuration
+ALLOWED_ORIGINS = [
+    "https://cleaniqqq.netlify.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+# Allow additional comma-separated origins via environment variable
+extra_origins = os.environ.get("ALLOWED_ORIGINS", "")
+if extra_origins:
+    ALLOWED_ORIGINS.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
