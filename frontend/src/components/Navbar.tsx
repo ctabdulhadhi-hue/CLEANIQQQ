@@ -4,9 +4,10 @@ import { ShieldCheck, Activity } from 'lucide-react';
 interface NavbarProps {
   backendConnected: boolean | null;
   activeSessions?: number;
+  wakingUp?: boolean;
 }
 
-export function Navbar({ backendConnected, activeSessions = 0 }: NavbarProps) {
+export function Navbar({ backendConnected, activeSessions = 0, wakingUp = false }: NavbarProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -17,6 +18,21 @@ export function Navbar({ backendConnected, activeSessions = 0 }: NavbarProps) {
       navigate('/dashboard');
     }
   }
+
+  // Determine status dot color and label
+  const getStatusDot = () => {
+    if (backendConnected === true) return 'bg-emerald-400 status-dot-pulse';
+    if (wakingUp) return 'bg-amber-400 animate-pulse';
+    if (backendConnected === false) return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]';
+    return 'bg-amber-400 animate-pulse'; // null = initial connecting
+  };
+
+  const getStatusLabel = () => {
+    if (backendConnected === true) return 'Backend Online';
+    if (wakingUp) return 'Waking up backend...';
+    if (backendConnected === false) return 'Backend Offline';
+    return 'Connecting...'; // null = initial
+  };
 
   return (
     <header className="h-16 border-b border-[rgba(255,255,255,0.08)] bg-[#0c0c0e]/90 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-40">
@@ -49,22 +65,8 @@ export function Navbar({ backendConnected, activeSessions = 0 }: NavbarProps) {
         <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.03] border border-[rgba(255,255,255,0.08)] text-xs">
           <Activity className="w-3.5 h-3.5 text-[#8a8a86]" />
           <div className="flex items-center gap-1.5">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                backendConnected === true
-                  ? 'bg-emerald-400 status-dot-pulse'
-                  : backendConnected === false
-                  ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]'
-                  : 'bg-amber-400 animate-pulse'
-              }`}
-            />
-            <span className="text-[#f2f2f0]">
-              {backendConnected === true
-                ? 'Backend Online'
-                : backendConnected === false
-                ? 'Backend Offline'
-                : 'Connecting...'}
-            </span>
+            <span className={`w-2 h-2 rounded-full ${getStatusDot()}`} />
+            <span className="text-[#f2f2f0]">{getStatusLabel()}</span>
           </div>
           {backendConnected && (
             <span className="text-[#8a8a86] border-l border-[rgba(255,255,255,0.08)] pl-2 text-[11px]">
@@ -76,3 +78,4 @@ export function Navbar({ backendConnected, activeSessions = 0 }: NavbarProps) {
     </header>
   );
 }
+
