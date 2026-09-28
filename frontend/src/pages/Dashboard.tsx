@@ -33,28 +33,44 @@ export function Dashboard() {
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
 
   useEffect(() => {
-    // Fetch backend health
+    let isMounted = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    // Fetch backend health with auto-refresh
     const fetchHealth = async () => {
-      setLoadingHealth(true);
       try {
-        const res = await checkBackendHealth();
-        setHealth(res);
+        const res = await checkBackendHealth(5000);
+        if (isMounted) {
+          setHealth(res);
+          setLoadingHealth(false);
+        }
       } catch {
-        setHealth(null);
-      } finally {
-        setLoadingHealth(false);
+        if (isMounted) {
+          setLoadingHealth(false);
+        }
       }
     };
 
     fetchHealth();
+    timer = setInterval(fetchHealth, 10000);
+
     const datasets = getRecentDatasets();
     setRecentDatasets(datasets);
 
     if (datasets.length > 0) {
       getQualityScore(datasets[0].dataset_id)
-        .then((q) => setQualityData(q))
-        .catch(() => setQualityData(null));
+        .then((q) => {
+          if (isMounted) setQualityData(q);
+        })
+        .catch(() => {
+          if (isMounted) setQualityData(null);
+        });
     }
+
+    return () => {
+      isMounted = false;
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   const handleDeleteRecent = (e: React.MouseEvent, id: string) => {

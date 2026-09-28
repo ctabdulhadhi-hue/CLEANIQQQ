@@ -36,10 +36,10 @@ export function Layout() {
     let isMounted = true;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    // Try a single health check
+    // Try a single health check with a short timeout
     const singleCheck = async (): Promise<boolean> => {
       try {
-        const data = await checkBackendHealth();
+        const data = await checkBackendHealth(5000);
         if (isMounted) markOnline(data.active_sessions || 0);
         return true;
       } catch {
@@ -49,12 +49,15 @@ export function Layout() {
 
     // Wake-up sequence: retry with increasing delays
     const wakeUpSequence = async () => {
+      // If we aren't already marked online from cache, show waking up
+      if (cachedBackendConnected !== true && isMounted) {
+        setWakingUp(true);
+      }
+
       // First attempt
       if (await singleCheck()) return;
 
-      // Backend didn't respond — start wake-up retries
-      if (isMounted) setWakingUp(true);
-
+      // Backend didn't respond immediately — retry through delays
       for (const delay of WAKE_UP_RETRY_DELAYS) {
         if (!isMounted) return;
         await new Promise((r) => setTimeout(r, delay));
@@ -62,20 +65,20 @@ export function Layout() {
         if (await singleCheck()) return;
       }
 
-      // All retries exhausted
+      // If still not reachable after ~67s, show offline but keep background polling
       if (isMounted) markOffline();
     };
 
     // Start with wake-up sequence
-    wakeUpSequence().then(() => {
+    wakeUpSequence().finally(() => {
       if (!isMounted) return;
-      // Once initial connection is resolved, poll normally
+      // Keep polling continuously so if backend wakes up later, it reconnects automatically
       pollTimer = setInterval(async () => {
         if (!isMounted) return;
         const ok = await singleCheck();
-        if (!ok && isMounted) {
-          // Single poll failure: try one more time before going offline
-          await new Promise((r) => setTimeout(r, 3000));
+        if (!ok && isMounted && cachedBackendConnected) {
+          // Retry once quickly before marking offline
+          await new Promise((r) => setTimeout(r, 2000));
           if (!isMounted) return;
           const retryOk = await singleCheck();
           if (!retryOk && isMounted) markOffline();
