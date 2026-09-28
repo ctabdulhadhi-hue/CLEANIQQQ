@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, NavLink } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   UploadCloud,
@@ -19,36 +19,10 @@ const navItems = [
 ];
 
 export function Sidebar() {
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  function handleLogoClick() {
-    if (location.pathname === '/dashboard') {
-      navigate('/');
-    } else if (location.pathname !== '/') {
-      navigate('/dashboard');
-    }
-  }
-
   return (
     <aside className="w-64 border-r border-[rgba(255,255,255,0.08)] bg-[#0c0c0e] flex flex-col justify-between p-4 shrink-0">
       <div>
-        <div className="px-3 mb-5 pt-1">
-          <button
-            type="button"
-            id="sidebar-logo-btn"
-            onClick={handleLogoClick}
-            className="block group cursor-pointer hover:opacity-90 hover:brightness-105 transition-all duration-150 bg-transparent border-none p-0 text-left"
-            aria-label="CleanIQ Logo Navigation"
-          >
-            <img
-              src="/logo-dark-bg.svg"
-              alt="CleanIQ"
-              className="h-7 w-auto object-contain transition-transform duration-150 group-hover:scale-[1.02]"
-            />
-          </button>
-        </div>
-        <div className="text-[11px] font-semibold tracking-wider text-[#8a8a86] uppercase px-3 mb-3">
+        <div className="text-[11px] font-semibold tracking-wider text-[#8a8a86] uppercase px-3 mb-3 pt-2">
           Navigation
         </div>
         <nav className="space-y-1">

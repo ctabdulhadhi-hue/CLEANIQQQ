@@ -9,6 +9,8 @@ router = APIRouter(tags=["Health"])
 async def health_check():
     return {
         "status": "ok",
+        "healthy": True,
+        "ok": True,
         "app": "CleanIQ",
         "version": "1.0.0",
         "active_sessions": len(session_store.list_active_dataset_ids()),

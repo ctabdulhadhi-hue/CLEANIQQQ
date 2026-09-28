@@ -32,12 +32,21 @@ export function useBackendStatus(): UseBackendStatusReturn {
     try {
       // 4-second timeout per attempt
       const res: HealthResponse = await checkBackendHealth(4000);
-      if (res && res.status === 'healthy') {
+      if (res && (res.status === 'ok' || res.status === 'healthy' || (res as any).ok)) {
         setStatus('ready');
         setActiveSessions(res.active_sessions || 0);
         setMessage('Backend Online');
         isCheckingRef.current = false;
         return true;
+      } else {
+        const elapsed = Date.now() - startTimeRef.current;
+        if (elapsed >= MAX_WAKE_TIME_MS) {
+          setStatus('failed');
+          setMessage("Backend didn't respond");
+        } else {
+          setStatus('waking');
+          setMessage('Backend is starting (free-tier cold start, usually 20-45 seconds)');
+        }
       }
     } catch {
       // Failed this ping
