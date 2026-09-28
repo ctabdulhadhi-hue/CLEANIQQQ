@@ -395,21 +395,52 @@ export function Landing() {
 
       {/* SECTION 2: HERO SECTION WITH DARK VEIL SHADER */}
       <section className="relative min-h-[82vh] flex items-center justify-center text-center px-6 overflow-hidden">
-        {/* DarkVeil Shader Background (WebGL Canvas) */}
-        {!prefersReducedMotion && (
-          <div className="absolute inset-0 z-0 pointer-events-none opacity-80 mix-blend-screen">
-            <Suspense fallback={<div className="w-full h-full bg-[#0c0c0e]" />}>
-              <DarkVeil
-                hueShift={28}
-                noiseIntensity={0.03}
-                speed={0.35}
-                scanlineIntensity={0.05}
-                scanlineFrequency={0.0}
-                warpAmount={0.08}
-              />
-            </Suspense>
-          </div>
+        {/* DarkVeil Shader Background (WebGL Canvas) & Tint Layer */}
+        {!prefersReducedMotion ? (
+          <>
+            <div className="absolute inset-0 z-0 pointer-events-none opacity-80 mix-blend-screen">
+              <Suspense fallback={<div className="w-full h-full bg-[#0c0c0e]" />}>
+                <DarkVeil
+                  hueShift={208}
+                  noiseIntensity={0.03}
+                  speed={0.35}
+                  scanlineIntensity={0.05}
+                  scanlineFrequency={0.0}
+                  warpAmount={0.08}
+                />
+              </Suspense>
+            </div>
+
+            {/* Deterministic orange tint layer directly above canvas (mix-blend-mode: color keeps brightness pattern but replaces hue with orange) */}
+            <div
+              className="absolute inset-0 pointer-events-none z-[1]"
+              style={{
+                backgroundColor: '#ff6a3d',
+                mixBlendMode: 'color',
+                opacity: 0.7,
+              }}
+            />
+          </>
+        ) : (
+          <div className="absolute inset-0 z-0 pointer-events-none bg-[#0c0c0e]" />
         )}
+
+        {/* Radial dark vignette overlay to keep generative glow centered behind hero headline */}
+        <div
+          className="absolute inset-0 z-[2] pointer-events-none"
+          style={{
+            background: 'radial-gradient(ellipse at 50% 30%, transparent 0%, #0c0c0e 75%)',
+          }}
+        />
+
+        {/* Dark bottom fade overlay for legibility and seamless page fade */}
+        <div
+          className="absolute inset-0 z-[2] pointer-events-none"
+          style={{
+            background:
+              'linear-gradient(to bottom, rgba(12, 12, 14, 0.25) 0%, rgba(12, 12, 14, 0.65) 60%, #0c0c0e 100%)',
+          }}
+        />
 
         <div className="relative z-10 max-w-4xl mx-auto pt-16 pb-20">
           {/* Eyebrow badge */}
