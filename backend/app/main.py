@@ -46,6 +46,8 @@ app = FastAPI(
 
 # CORS configuration
 ALLOWED_ORIGINS = [
+    "https://cleaniq-a1f4f.web.app",
+    "https://cleaniq-a1f4f.firebaseapp.com",
     "https://cleaniqqq.netlify.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
