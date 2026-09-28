@@ -23,13 +23,17 @@ import {
   getRecentDatasets,
   getDatasetExportUrl,
   getReportExportUrl,
+  getQualityScore,
   loadSampleDataset,
   type DatasetProfileResponse,
   type RecentDataset,
+  type QualityScoreResponse,
   updateRecentDatasetIssues,
 } from '../services/api';
 import { DataTable } from '../components/DataTable';
 import { TiltCard } from '../components/reactbits/TiltCard';
+import { DataQualitySummaryCard } from '../components/DataQualitySummaryCard';
+import { OrderIdConflictCard } from '../components/OrderIdConflictCard';
 
 export function Dataset() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -44,9 +48,31 @@ export function Dataset() {
   });
 
   const [profile, setProfile] = useState<DatasetProfileResponse | null>(null);
+  const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [resettingSample, setResettingSample] = useState(false);
+
+  const fetchDatasetData = async (datasetId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [resProfile, resQuality] = await Promise.all([
+        getDatasetProfile(datasetId),
+        getQualityScore(datasetId).catch(() => null),
+      ]);
+      setProfile(resProfile);
+      setQualityData(resQuality);
+
+      const totalMissing = resProfile.columns.reduce((sum, col) => sum + col.missing_count, 0);
+      const totalIssues = totalMissing + resProfile.duplicate_row_count;
+      updateRecentDatasetIssues(datasetId, totalIssues);
+    } catch (err: any) {
+      setError(err.message || 'Dataset not found or session has expired.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleResetSample = async () => {
     try {
@@ -73,42 +99,15 @@ export function Dataset() {
     }
   }, [queryId, activeDatasetId, recentDatasets, setSearchParams]);
 
-  // Fetch dataset profile when activeDatasetId changes
+  // Fetch dataset profile & quality when activeDatasetId changes
   useEffect(() => {
-    let cancelled = false;
     if (!activeDatasetId) {
       setProfile(null);
+      setQualityData(null);
       return;
     }
 
-    const fetchProfile = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await getDatasetProfile(activeDatasetId);
-        if (!cancelled) {
-          setProfile(res);
-          // Update total issues found in local storage
-          const totalMissing = res.columns.reduce((sum, col) => sum + col.missing_count, 0);
-          const totalIssues = totalMissing + res.duplicate_row_count;
-          updateRecentDatasetIssues(activeDatasetId, totalIssues);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(err.message || 'Dataset not found or session has expired.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchProfile();
-
-    return () => {
-      cancelled = true;
-    };
+    fetchDatasetData(activeDatasetId);
   }, [activeDatasetId]);
 
   const handleSelectDataset = (id: string) => {
@@ -367,6 +366,23 @@ export function Dataset() {
               </p>
             </TiltCard>
           </div>
+
+          {/* Professional Data Quality Summary */}
+          {qualityData?.summary && (
+            <DataQualitySummaryCard
+              summary={qualityData.summary}
+              filename={currentFilename}
+            />
+          )}
+
+          {/* Order ID Integrity & Conflict Card */}
+          {activeDatasetId && qualityData?.order_id_analysis?.order_id_column && (
+            <OrderIdConflictCard
+              datasetId={activeDatasetId}
+              analysis={qualityData.order_id_analysis}
+              onRefresh={() => fetchDatasetData(activeDatasetId)}
+            />
+          )}
 
           {/* Type Distribution & Missing Values Row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

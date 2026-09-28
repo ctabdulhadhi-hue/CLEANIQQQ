@@ -26,6 +26,7 @@ import {
   X,
   Zap,
   Check,
+  Hash,
 } from 'lucide-react';
 import {
   getDatasetProfile,
@@ -46,6 +47,7 @@ import {
   detectOutliers,
   handleOutliers,
   analyzeDatasetWithAI,
+  getOrderIdAnalysis,
   type DatasetProfileResponse,
   type CleanOperationResponse,
   type OperationLogEntry,
@@ -55,12 +57,15 @@ import {
   type OutlierDetectResponse,
   type AIAnalysisResponse,
   type AIRecommendationItem,
+  type OrderIdAnalysisResponse,
 } from '../services/api';
 import { DataTable } from '../components/DataTable';
+import { OrderIdConflictCard } from '../components/OrderIdConflictCard';
 
 type FillMethod = 'remove' | 'mean' | 'median' | 'mode' | 'custom';
 type StudioTab =
   | 'nulls-duplicates'
+  | 'order-ids'
   | 'type-conversion'
   | 'text-cleaning'
   | 'column-management'
@@ -79,6 +84,7 @@ export function Cleaning() {
   });
 
   const [profile, setProfile] = useState<DatasetProfileResponse | null>(null);
+  const [orderAnalysis, setOrderAnalysis] = useState<OrderIdAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -302,17 +308,19 @@ export function Cleaning() {
       setCalcPreview(null);
 
       try {
-        const [profileData, dupData, logData, typeData] = await Promise.all([
+        const [profileData, dupData, logData, typeData, orderData] = await Promise.all([
           getDatasetProfile(activeDatasetId),
           cleanDuplicates(activeDatasetId, true),
           getOperationLog(activeDatasetId),
           getTypeSuggestions(activeDatasetId).catch(() => ({ dataset_id: activeDatasetId, suggestions: [] })),
+          getOrderIdAnalysis(activeDatasetId).catch(() => null),
         ]);
         if (!cancelled) {
           setProfile(profileData);
           setDupPreview(dupData);
           setOpLog(logData.entries);
           setTypeSuggestions(typeData.suggestions);
+          setOrderAnalysis(orderData);
           setColOrderList(profileData.columns.map((c) => c.name));
           if (profileData.columns.length > 0) {
             setSelectedTypeCol(profileData.columns[0].name);
@@ -344,16 +352,18 @@ export function Cleaning() {
   const refreshAll = async () => {
     if (!activeDatasetId) return;
     try {
-      const [profileData, dupData, logData, typeData] = await Promise.all([
+      const [profileData, dupData, logData, typeData, orderData] = await Promise.all([
         getDatasetProfile(activeDatasetId),
         cleanDuplicates(activeDatasetId, true),
         getOperationLog(activeDatasetId),
         getTypeSuggestions(activeDatasetId).catch(() => ({ dataset_id: activeDatasetId, suggestions: [] })),
+        getOrderIdAnalysis(activeDatasetId).catch(() => null),
       ]);
       setProfile(profileData);
       setDupPreview(dupData);
       setOpLog(logData.entries);
       setTypeSuggestions(typeData.suggestions);
+      setOrderAnalysis(orderData);
       setColOrderList(profileData.columns.map((c) => c.name));
     } catch {
       // silently fail refresh
@@ -966,6 +976,27 @@ export function Cleaning() {
         </button>
 
         <button
+          onClick={() => setActiveTab('order-ids')}
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
+            activeTab === 'order-ids'
+              ? 'bg-[#ff6a3d]/15 text-[#ff6a3d] border border-[#ff6a3d]/30 font-semibold'
+              : 'text-[#8a8a86] hover:text-[#f2f2f0] hover:bg-white/[0.04]'
+          }`}
+        >
+          <Hash className="w-3.5 h-3.5" />
+          <span>Order ID Integrity</span>
+          {orderAnalysis?.has_conflict ? (
+            <span className="px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-bold">
+              Conflict!
+            </span>
+          ) : orderAnalysis?.order_id_column ? (
+            <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-[#8a8a86] text-[10px]">
+              {orderAnalysis.order_id_column}
+            </span>
+          ) : null}
+        </button>
+
+        <button
           onClick={() => setActiveTab('type-conversion')}
           className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${
             activeTab === 'type-conversion'
@@ -1025,9 +1056,44 @@ export function Cleaning() {
         </div>
       ) : (
         <>
+          {/* TAB: ORDER IDS & INTEGRITY */}
+          {activeTab === 'order-ids' && (
+            <div className="space-y-6">
+              {activeDatasetId && (
+                <OrderIdConflictCard
+                  datasetId={activeDatasetId}
+                  analysis={orderAnalysis}
+                  onRefresh={() => refreshAll()}
+                />
+              )}
+            </div>
+          )}
+
           {/* TAB 1: NULLS & DUPLICATES */}
           {activeTab === 'nulls-duplicates' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Conflict Callout Banner */}
+              {orderAnalysis?.has_conflict && (
+                <div className="col-span-full p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck className="w-5 h-5 text-rose-400 shrink-0" />
+                    <div>
+                      <p className="text-xs font-bold text-rose-300">
+                        Potential Order ID Conflict Detected ({orderAnalysis.conflicting_order_ids ?? orderAnalysis.conflicting_order_ids_count} conflicting IDs)
+                      </p>
+                      <p className="text-xs text-rose-200/80">
+                        Same Order ID appears across separate transactions (different dates or customers).
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('order-ids')}
+                    className="btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+                  >
+                    Resolve Conflicts
+                  </button>
+                </div>
+              )}
               {/* Missing Values Panel */}
               <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-white/[0.03] overflow-hidden flex flex-col">
                 <div className="p-5 border-b border-[rgba(255,255,255,0.08)] flex items-center justify-between">

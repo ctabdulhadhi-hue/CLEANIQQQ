@@ -104,6 +104,22 @@ class ReportGeneratorService:
         overall_before_pct = round(m["quality_before"]["overall_score"] * 100, 1)
         overall_after_pct = round(m["quality_after"]["overall_score"] * 100, 1)
 
+        qb_summary = m["quality_before"].get("summary") or {}
+        qa_summary = m["quality_after"].get("summary") or {}
+
+        cols_before = m.get("cols_before", len(session.original_df.columns))
+        cols_after = m.get("cols_after", len(session.df.columns))
+
+        b_missing = qb_summary.get("missing_values", 0)
+        b_dups = qb_summary.get("duplicate_rows", 0)
+        b_dup_ids = qb_summary.get("duplicate_order_ids", 0)
+        b_issues = qb_summary.get("cleaning_issues", len(qb_summary.get("issues", [])))
+
+        a_missing = qa_summary.get("missing_values", 0)
+        a_dups = qa_summary.get("duplicate_rows", 0)
+        a_dup_ids = qa_summary.get("duplicate_order_ids", 0)
+        a_issues = qa_summary.get("cleaning_issues", len(qa_summary.get("issues", [])))
+
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -157,6 +173,41 @@ class ReportGeneratorService:
       <div class="metric-box">
         <div class="metric-title">Total Cells Affected</div>
         <div class="metric-value">{m['total_affected_rows']}</div>
+      </div>
+    </div>
+
+    <h2>Dataset Cleaning Audit: Before vs. After</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px;">
+      <!-- BEFORE CLEANING -->
+      <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; border-bottom: 1px solid #fca5a5; padding-bottom: 8px;">
+          <h3 style="margin: 0; color: #991b1b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Before Cleaning</h3>
+          <span style="background: #fee2e2; color: #991b1b; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px;">Raw State</span>
+        </div>
+        <table style="width: 100%; border: none; background: transparent; margin: 0;">
+          <tr style="border-bottom: 1px solid rgba(254, 202, 202, 0.6);"><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Number of rows</td><td style="text-align: right; font-weight: 700; font-family: monospace;">{m['rows_before']}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(254, 202, 202, 0.6);"><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Number of columns</td><td style="text-align: right; font-weight: 700; font-family: monospace;">{cols_before}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(254, 202, 202, 0.6);"><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Missing values</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #b91c1c;">{b_missing}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(254, 202, 202, 0.6);"><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Duplicate rows</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #b91c1c;">{b_dups}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(254, 202, 202, 0.6);"><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Duplicate IDs</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #b91c1c;">{b_dup_ids}</td></tr>
+          <tr><td style="padding: 6px 0; color: #7f1d1d; font-size: 13px;">Data-quality issues</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #b91c1c;">{b_issues}</td></tr>
+        </table>
+      </div>
+
+      <!-- AFTER CLEANING -->
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; border-bottom: 1px solid #86efac; padding-bottom: 8px;">
+          <h3 style="margin: 0; color: #166534; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">After Cleaning</h3>
+          <span style="background: #dcfce7; color: #166534; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px;">Cleaned State</span>
+        </div>
+        <table style="width: 100%; border: none; background: transparent; margin: 0;">
+          <tr style="border-bottom: 1px solid rgba(187, 247, 208, 0.6);"><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Number of rows</td><td style="text-align: right; font-weight: 700; font-family: monospace;">{m['rows_after']}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(187, 247, 208, 0.6);"><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Number of columns</td><td style="text-align: right; font-weight: 700; font-family: monospace;">{cols_after}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(187, 247, 208, 0.6);"><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Missing values</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #15803d;">{a_missing}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(187, 247, 208, 0.6);"><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Duplicate rows</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #15803d;">{a_dups}</td></tr>
+          <tr style="border-bottom: 1px solid rgba(187, 247, 208, 0.6);"><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Duplicate IDs</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #15803d;">{a_dup_ids}</td></tr>
+          <tr><td style="padding: 6px 0; color: #14532d; font-size: 13px;">Remaining warnings</td><td style="text-align: right; font-weight: 700; font-family: monospace; color: #15803d;">{a_issues}</td></tr>
+        </table>
       </div>
     </div>
 

@@ -5,9 +5,18 @@ interface NavbarProps {
   backendConnected: boolean | null;
   activeSessions?: number;
   wakingUp?: boolean;
+  status?: 'checking' | 'waking' | 'ready' | 'failed';
+  statusMessage?: string;
+  onCheckStatus?: () => void;
 }
 
-export function Navbar({ backendConnected, activeSessions = 0, wakingUp = false }: NavbarProps) {
+export function Navbar({
+  backendConnected,
+  activeSessions = 0,
+  wakingUp = false,
+  status,
+  onCheckStatus,
+}: NavbarProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -19,19 +28,32 @@ export function Navbar({ backendConnected, activeSessions = 0, wakingUp = false 
     }
   }
 
+  const effectiveStatus = status || (backendConnected === true ? 'ready' : backendConnected === false ? 'failed' : wakingUp ? 'waking' : 'checking');
+
   // Determine status dot color and label
   const getStatusDot = () => {
-    if (backendConnected === true) return 'bg-emerald-400 status-dot-pulse';
-    if (wakingUp) return 'bg-amber-400 animate-pulse';
-    if (backendConnected === false) return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]';
-    return 'bg-amber-400 animate-pulse'; // null = initial connecting
+    switch (effectiveStatus) {
+      case 'ready':
+        return 'bg-emerald-400 status-dot-pulse';
+      case 'waking':
+      case 'checking':
+        return 'bg-amber-400 animate-pulse';
+      case 'failed':
+        return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]';
+    }
   };
 
   const getStatusLabel = () => {
-    if (backendConnected === true) return 'Backend Online';
-    if (wakingUp) return 'Waking up backend...';
-    if (backendConnected === false) return 'Backend Offline';
-    return 'Connecting...'; // null = initial
+    switch (effectiveStatus) {
+      case 'ready':
+        return 'Backend Online';
+      case 'waking':
+        return 'Waking up backend...';
+      case 'checking':
+        return 'Connecting...';
+      case 'failed':
+        return "Backend didn't respond";
+    }
   };
 
   return (
@@ -40,7 +62,7 @@ export function Navbar({ backendConnected, activeSessions = 0, wakingUp = false 
         type="button"
         id="app-navbar-logo-btn"
         onClick={handleLogoClick}
-        className="flex items-center gap-3 cursor-pointer group hover:opacity-90 hover:brightness-105 transition-all duration-150 bg-transparent border-none p-0 text-left"
+        className="flex items-center gap-3 cursor-pointer group hover:opacity-90 hover:brightness-105 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d] bg-transparent border-none p-0 text-left rounded"
         aria-label="CleanIQ Logo Navigation"
       >
         <img
@@ -61,17 +83,27 @@ export function Navbar({ backendConnected, activeSessions = 0, wakingUp = false 
           <span className="text-[#f2f2f0]">Explicit Approval Required</span>
         </div>
 
-        {/* Backend Status Indicator */}
-        <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.03] border border-[rgba(255,255,255,0.08)] text-xs">
+        {/* Backend Status Indicator (Fixed min-width to avoid layout shift) */}
+        <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.03] border border-[rgba(255,255,255,0.08)] text-xs min-h-[32px]">
           <Activity className="w-3.5 h-3.5 text-[#8a8a86]" />
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-[110px]">
             <span className={`w-2 h-2 rounded-full ${getStatusDot()}`} />
             <span className="text-[#f2f2f0]">{getStatusLabel()}</span>
           </div>
-          {backendConnected && (
+
+          {effectiveStatus === 'ready' && activeSessions > 0 && (
             <span className="text-[#8a8a86] border-l border-[rgba(255,255,255,0.08)] pl-2 text-[11px]">
               {activeSessions} session{activeSessions === 1 ? '' : 's'}
             </span>
+          )}
+
+          {effectiveStatus === 'failed' && onCheckStatus && (
+            <button
+              onClick={onCheckStatus}
+              className="ml-1 text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 transition-all active:scale-[0.98] font-semibold"
+            >
+              Check status
+            </button>
           )}
         </div>
       </div>

@@ -54,7 +54,11 @@ from app.models.dataset import (
     UndoRedoResponse,
     AIRecommendationItem,
     AIAnalysisResponse,
+    OrderIdAnalysisResponse,
+    GenerateUniqueOrderIdsRequest,
 )
+from app.services.cleaner import preview_operation, apply_operation
+from app.services.order_validator import OrderValidatorService
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["Datasets"])
 
@@ -1161,7 +1165,7 @@ async def handle_outliers(
 async def get_quality_score(
     dataset_id: str = Path(..., description="Unique dataset identifier"),
 ):
-    """Computes overall quality score and 4 sub-scores (completeness, consistency, validity, uniqueness)."""
+    """Computes overall quality score, 4 sub-scores, full Data Quality Summary, and Order ID analysis."""
     session = session_store.get_session(dataset_id)
     if session is None:
         raise AppError(code="DATASET_NOT_FOUND", message=f"Dataset '{dataset_id}' not found.", status_code=404)
@@ -1171,6 +1175,102 @@ async def get_quality_score(
         dataset_id=dataset_id,
         overall_score=score_dict["overall_score"],
         sub_scores=score_dict["sub_scores"],
+        summary=score_dict.get("summary"),
+        order_id_analysis=score_dict.get("order_id_analysis"),
+    )
+
+
+@router.get("/{dataset_id}/order-ids/analysis", response_model=OrderIdAnalysisResponse)
+async def get_order_id_analysis(
+    dataset_id: str = Path(..., description="Unique dataset identifier"),
+    column: Optional[str] = Query(None, description="Optional column override to treat as Order ID"),
+):
+    """Intelligently inspects Order IDs for duplicates and cross-transaction conflicts."""
+    session = session_store.get_session(dataset_id)
+    if session is None:
+        raise AppError(code="DATASET_NOT_FOUND", message=f"Dataset '{dataset_id}' not found.", status_code=404)
+
+    analysis = OrderValidatorService.analyze_order_ids(session.df, order_id_col=column)
+    return OrderIdAnalysisResponse(**analysis)
+
+
+@router.post("/{dataset_id}/clean/order-ids/generate-unique", response_model=CleanOperationResponse)
+async def clean_order_ids_generate_unique(
+    dataset_id: str = Path(..., description="Unique dataset identifier"),
+    request: GenerateUniqueOrderIdsRequest = Body(...),
+):
+    """
+    Safely generates unique Order IDs for conflicting transactions.
+    Supports preview (diff) and apply with explicit approval.
+    """
+    session = session_store.get_session(dataset_id)
+    if session is None:
+        raise AppError(code="DATASET_NOT_FOUND", message=f"Dataset '{dataset_id}' not found.", status_code=404)
+
+    params = {
+        "column": request.column,
+        "mode": request.mode,
+        "prefix": request.prefix,
+        "start_number": request.start_number,
+    }
+
+    if not request.apply:
+        # Preview diff
+        preview_data = preview_operation(
+            df=session.df,
+            dataset_id=dataset_id,
+            operation="generate_unique_order_ids",
+            columns=[request.column] if request.column else [],
+            params=params,
+        )
+        return CleanOperationResponse(
+            dataset_id=dataset_id,
+            operation="generate_unique_order_ids",
+            params=params,
+            columns_affected=preview_data["columns_affected"],
+            affected_rows=preview_data["affected_row_count"],
+            before_summary={"total_rows": preview_data["total_rows_before"]},
+            after_summary={"total_rows": preview_data["total_rows_after"]},
+            diffs=preview_data["sample_diffs"],
+            message=preview_data["summary"],
+        )
+
+    # Apply operation
+    rows_before = len(session.df)
+    result_df, affected_cols, affected, summary = apply_operation(
+        df=session.df,
+        operation="generate_unique_order_ids",
+        columns=[request.column] if request.column else [],
+        params=params,
+    )
+    rows_after = len(result_df)
+
+    before_summary = {"total_rows": rows_before}
+    after_summary = {"total_rows": rows_after}
+
+    record = OperationRecord(
+        operation="generate_unique_order_ids",
+        params=params,
+        columns_affected=affected_cols,
+        affected_row_count=affected,
+        rows_before=rows_before,
+        rows_after=rows_after,
+        snapshot_before=session.df.copy(deep=True),
+    )
+    op_index = session.push_operation(record)
+    session.df = result_df
+    session.touch()
+
+    return CleanOperationResponse(
+        dataset_id=dataset_id,
+        operation="generate_unique_order_ids",
+        params=params,
+        columns_affected=affected_cols,
+        affected_rows=affected,
+        before_summary=before_summary,
+        after_summary=after_summary,
+        operation_id=f"op_{op_index}",
+        message=summary,
     )
 
 

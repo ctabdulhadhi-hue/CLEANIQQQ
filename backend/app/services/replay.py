@@ -140,6 +140,21 @@ class ReplayEngine:
                   )
                   result_df = res_df
 
+          elif operation == "generate_unique_order_ids":
+              from app.services.order_validator import OrderValidatorService
+              col = params.get("column")
+              mode = params.get("mode", "conflicts_only")
+              prefix = params.get("prefix")
+              start_num = int(params.get("start_number", 1))
+              cleaned_df, _ = OrderValidatorService.generate_unique_order_ids(
+                  df=result_df,
+                  order_id_col=col,
+                  mode=mode,
+                  prefix=prefix,
+                  start_number=start_num,
+              )
+              result_df = cleaned_df
+
         except Exception as e:
             logger.error(f"Error replaying operation '{operation}' with params {params}: {e}")
 

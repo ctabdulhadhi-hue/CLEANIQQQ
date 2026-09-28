@@ -23,9 +23,13 @@ import {
 } from '../services/api';
 import { TiltCard } from '../components/reactbits/TiltCard';
 import { useCountUp } from '../hooks/useCountUp';
+import { useBackendStatus } from '../hooks/useBackendStatus';
+import { DataQualitySummaryCard } from '../components/DataQualitySummaryCard';
+import { OrderIdConflictCard } from '../components/OrderIdConflictCard';
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const backend = useBackendStatus();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loadingHealth, setLoadingHealth] = useState<boolean>(true);
 
@@ -57,14 +61,18 @@ export function Dashboard() {
     const datasets = getRecentDatasets();
     setRecentDatasets(datasets);
 
-    if (datasets.length > 0) {
-      getQualityScore(datasets[0].dataset_id)
+    const loadQuality = (targetId: string) => {
+      getQualityScore(targetId)
         .then((q) => {
           if (isMounted) setQualityData(q);
         })
         .catch(() => {
           if (isMounted) setQualityData(null);
         });
+    };
+
+    if (datasets.length > 0) {
+      loadQuality(datasets[0].dataset_id);
     }
 
     return () => {
@@ -73,10 +81,25 @@ export function Dashboard() {
     };
   }, []);
 
+  const reloadQuality = (datasetId?: string) => {
+    const id = datasetId || recentDatasets[0]?.dataset_id;
+    if (id) {
+      getQualityScore(id)
+        .then((q) => setQualityData(q))
+        .catch(() => setQualityData(null));
+    }
+  };
+
   const handleDeleteRecent = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     removeRecentDataset(id);
-    setRecentDatasets(getRecentDatasets());
+    const updated = getRecentDatasets();
+    setRecentDatasets(updated);
+    if (updated.length > 0) {
+      reloadQuality(updated[0].dataset_id);
+    } else {
+      setQualityData(null);
+    }
   };
 
   // Calculate KPIs
@@ -104,6 +127,34 @@ export function Dashboard() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
+      {/* Backend Cold-Start Status Banner */}
+      {!backend.isReady && (
+        <div
+          className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${
+            backend.isFailed
+              ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                backend.isFailed ? 'bg-rose-400' : 'bg-amber-400 animate-pulse'
+              }`}
+            />
+            <p className="text-xs font-medium">{backend.message}</p>
+          </div>
+          {backend.isFailed && (
+            <button
+              onClick={backend.checkStatus}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-white transition-all active:scale-[0.98]"
+            >
+              Check status
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Hero Welcome Card */}
       <div className="relative overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-white/[0.03] p-8 sm:p-10">
         <div className="relative z-10 max-w-2xl space-y-4">
@@ -119,18 +170,29 @@ export function Dashboard() {
             previewed and explicitly approved before being committed.
           </p>
           <div className="pt-2 flex flex-wrap items-center gap-3">
-            <Link
-              to="/upload"
-              className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
-            >
-              <UploadCloud className="w-4 h-4" />
-              <span>Upload Dataset</span>
-              <ArrowRight className="w-4 h-4 ml-0.5" />
-            </Link>
+            {backend.isReady ? (
+              <Link
+                to="/upload"
+                className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold active:scale-[0.98] transition-transform"
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Upload Dataset</span>
+                <ArrowRight className="w-4 h-4 ml-0.5" />
+              </Link>
+            ) : (
+              <div
+                className="btn-primary opacity-50 cursor-not-allowed inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold select-none"
+                title={backend.isFailed ? "Backend didn't respond. Click Check Status above." : "Backend is starting (free-tier cold start, usually 20-45s)..."}
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Upload Dataset</span>
+                <span className="text-[10px] font-normal opacity-80">(Waking backend...)</span>
+              </div>
+            )}
             {recentDatasets.length > 0 && (
               <Link
                 to={`/dataset?id=${recentDatasets[0].dataset_id}`}
-                className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium"
+                className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium active:scale-[0.98] transition-transform"
               >
                 <Database className="w-4 h-4" />
                 <span>Open Latest Dataset</span>
@@ -221,6 +283,23 @@ export function Dashboard() {
           </TiltCard>
         </div>
       </div>
+
+      {/* Professional Data Quality Summary */}
+      {qualityData?.summary && (
+        <DataQualitySummaryCard
+          summary={qualityData.summary}
+          filename={recentDatasets[0]?.filename}
+        />
+      )}
+
+      {/* Order ID Integrity & Conflict Card */}
+      {recentDatasets.length > 0 && qualityData?.order_id_analysis?.order_id_column && (
+        <OrderIdConflictCard
+          datasetId={recentDatasets[0].dataset_id}
+          analysis={qualityData.order_id_analysis}
+          onRefresh={() => reloadQuality(recentDatasets[0].dataset_id)}
+        />
+      )}
 
       {/* Quality Score Breakdown Sub-Scores */}
       {qualityData && (

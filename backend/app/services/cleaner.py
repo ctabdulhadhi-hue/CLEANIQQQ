@@ -19,6 +19,7 @@ SUPPORTED_OPERATIONS = [
     "drop_missing_rows",
     "trim_whitespace",
     "standardize_case",
+    "generate_unique_order_ids",
 ]
 
 MAX_SAMPLE_DIFFS = 20
@@ -233,6 +234,28 @@ def _preview_standardize_case(
     return result, text_cols, summary
 
 
+def _preview_generate_unique_order_ids(
+    df: pd.DataFrame, columns: List[str], params: Dict[str, Any]
+) -> Tuple[pd.DataFrame, List[str], str]:
+    from app.services.order_validator import OrderValidatorService
+
+    order_id_col = params.get("column") or (columns[0] if columns else None)
+    mode = params.get("mode", "conflicts_only")
+    prefix = params.get("prefix")
+    start_num = int(params.get("start_number", 1))
+
+    cleaned_df, info = OrderValidatorService.generate_unique_order_ids(
+        df=df,
+        order_id_col=order_id_col,
+        mode=mode,
+        prefix=prefix,
+        start_number=start_num,
+    )
+    col_used = info["column"]
+    summary = info["logs"][0] if info["logs"] else f"Generated unique Order IDs for {info['rows_affected']} row(s)"
+    return cleaned_df, [col_used], summary
+
+
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -242,6 +265,7 @@ OPERATION_HANDLERS = {
     "drop_missing_rows": _preview_drop_missing_rows,
     "trim_whitespace": _preview_trim_whitespace,
     "standardize_case": _preview_standardize_case,
+    "generate_unique_order_ids": _preview_generate_unique_order_ids,
 }
 
 

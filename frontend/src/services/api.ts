@@ -254,10 +254,83 @@ export interface QualitySubScore {
   detail: string;
 }
 
+export interface QualityMetricItem {
+  name: string;
+  count: number;
+  status: 'clean' | 'warning' | 'error';
+  detail: string;
+}
+
+export interface QualityIssueItem {
+  category: string;
+  severity: 'warning' | 'error';
+  description: string;
+  count: number;
+  columns: string[];
+}
+
+export interface QualitySummary {
+  overall_score: number;
+  overall_quality_score?: number;
+  total_rows: number;
+  total_columns: number;
+  missing_values: number;
+  duplicate_rows: number;
+  duplicate_order_ids: number;
+  order_id_conflicts: number;
+  invalid_values: number;
+  cleaning_issues: number;
+  overall_status: 'clean' | 'warning' | 'error';
+  metrics: QualityMetricItem[];
+  issues: QualityIssueItem[];
+}
+
+export interface OrderIdConflictItem {
+  order_id: string;
+  occurrences: number;
+  different_dates: 'Yes' | 'No';
+  dates: string[];
+  different_customers: 'Yes' | 'No';
+  customers: string[];
+  different_products: 'Yes' | 'No';
+  products: string[];
+  status: 'Conflict' | 'Valid Order-Line';
+}
+
+export interface OrderIdAnalysisResponse {
+  order_id_column: string | null;
+  total_rows: number;
+  unique_order_ids: number;
+  duplicate_order_ids: number;
+  duplicate_order_ids_count?: number;
+  conflicting_order_ids: number;
+  conflicting_order_ids_count?: number;
+  rows_affected: number;
+  has_conflict: boolean;
+  dataset_structure: 'order_level' | 'order_line' | 'order_level_with_conflicts';
+  detected_structure?: string;
+  warning_message: string;
+  conflict_table: OrderIdConflictItem[];
+  problematic_ids?: OrderIdConflictItem[];
+  date_columns_checked?: string[];
+  customer_columns_checked?: string[];
+  product_columns_checked?: string[];
+}
+
+export interface GenerateUniqueOrderIdsRequest {
+  column?: string;
+  mode?: 'conflicts_only' | 'all_rows';
+  scope?: string;
+  prefix?: string;
+  start_number?: number;
+}
+
 export interface QualityScoreResponse {
   dataset_id: string;
   overall_score: number;
   sub_scores: QualitySubScore[];
+  summary?: QualitySummary;
+  order_id_analysis?: OrderIdAnalysisResponse;
 }
 
 // ─── Module 6: Visualization Data Types ─────────────────────────────────────
@@ -741,6 +814,32 @@ export async function analyzeDatasetWithAI(datasetId: string): Promise<AIAnalysi
     method: 'POST',
   });
   return handleResponse<AIAnalysisResponse>(res);
+}
+
+// ─── Module 8: Order ID Conflict & Validation ────────────────────────────────
+
+export async function getOrderIdAnalysis(
+  datasetId: string,
+  column?: string
+): Promise<OrderIdAnalysisResponse> {
+  const query = column ? `?column=${encodeURIComponent(column)}` : '';
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/order-ids/analysis${query}`);
+  return handleResponse<OrderIdAnalysisResponse>(res);
+}
+
+export async function generateUniqueOrderIds(
+  datasetId: string,
+  payload: GenerateUniqueOrderIdsRequest = {}
+): Promise<CleanOperationResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/order-ids/generate-unique`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+  return handleResponse<CleanOperationResponse>(res);
 }
 
 

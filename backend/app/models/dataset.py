@@ -72,6 +72,13 @@ class CleanDuplicatesRequest(BaseModel):
     pass
 
 
+class DiffRow(BaseModel):
+    row_index: int
+    column: str
+    before: Optional[Any] = None
+    after: Optional[Any] = None
+
+
 class CleanOperationResponse(BaseModel):
     """
     Unified response for all cleaning endpoints.
@@ -258,10 +265,74 @@ class QualitySubScore(BaseModel):
     detail: str
 
 
+class QualityMetricItem(BaseModel):
+    name: str
+    count: int
+    status: str = "clean"  # 'clean' | 'warning' | 'error'
+    detail: str = ""
+
+
+class QualityIssueItem(BaseModel):
+    category: str
+    severity: str = "warning"  # 'clean' | 'warning' | 'error'
+    description: str
+    count: int = 0
+    columns: List[str] = []
+
+
+class OrderIdConflictItem(BaseModel):
+    order_id: str
+    occurrences: int
+    different_dates: str = "No"
+    dates: List[str] = []
+    different_customers: str = "No"
+    customers: List[str] = []
+    different_products: str = "No"
+    products: List[str] = []
+    status: str = "Valid Order-Line"  # 'Conflict' | 'Valid Order-Line' | 'Unique'
+
+
+class OrderIdAnalysisResponse(BaseModel):
+    order_id_column: Optional[str] = None
+    total_rows: int = 0
+    unique_order_ids: int = 0
+    duplicate_order_ids_count: int = 0
+    conflicting_order_ids_count: int = 0
+    rows_affected: int = 0
+    has_conflict: bool = False
+    detected_structure: str = "order_level"  # 'order_level' | 'order_line' | 'order_level_with_conflicts'
+    warning_message: str = ""
+    conflict_table: List[OrderIdConflictItem] = []
+
+
+class QualitySummary(BaseModel):
+    total_rows: int = 0
+    total_columns: int = 0
+    missing_values: int = 0
+    duplicate_rows: int = 0
+    duplicate_order_ids: int = 0
+    order_id_conflicts: int = 0
+    invalid_values: int = 0
+    cleaning_issues: int = 0
+    overall_status: str = "clean"  # 'clean' | 'warning' | 'error'
+    metrics: List[QualityMetricItem] = []
+    issues: List[QualityIssueItem] = []
+
+
 class QualityScoreResponse(BaseModel):
     dataset_id: str
     overall_score: float
     sub_scores: List[QualitySubScore]
+    summary: Optional[QualitySummary] = None
+    order_id_analysis: Optional[OrderIdAnalysisResponse] = None
+
+
+class GenerateUniqueOrderIdsRequest(BaseModel):
+    column: Optional[str] = None
+    mode: str = Field(default="conflicts_only", description="conflicts_only | all_rows")
+    prefix: Optional[str] = None
+    start_number: int = Field(default=1, ge=1)
+    apply: bool = Field(default=False)
 
 
 # ─── Visualization Data Models ──────────────────────────────────────────────

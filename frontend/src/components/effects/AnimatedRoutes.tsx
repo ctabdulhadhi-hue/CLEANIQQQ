@@ -12,6 +12,8 @@ const Dataset = lazy(() => import('../../pages/Dataset').then((m) => ({ default:
 const Cleaning = lazy(() => import('../../pages/Cleaning').then((m) => ({ default: m.Cleaning })));
 const Visualization = lazy(() => import('../../pages/Visualization').then((m) => ({ default: m.Visualization })));
 const History = lazy(() => import('../../pages/History').then((m) => ({ default: m.History })));
+const Privacy = lazy(() => import('../../pages/Privacy').then((m) => ({ default: m.Privacy })));
+const Terms = lazy(() => import('../../pages/Terms').then((m) => ({ default: m.Terms })));
 
 function PageFallback() {
   return (
@@ -25,7 +27,7 @@ function PageFallback() {
 }
 
 function isLandingPath(path: string): boolean {
-  return path === '/' || path === '/landing';
+  return path === '/' || path === '/landing' || path === '/privacy' || path === '/terms';
 }
 
 const pageVariants = {
@@ -118,9 +120,11 @@ export function AnimatedRoutes() {
         >
           <Suspense fallback={<PageFallback />}>
             <Routes location={location}>
-              {/* Public Marketing Landing Page */}
+              {/* Public Marketing & Legal Pages */}
               <Route path="/" element={<Landing />} />
               <Route path="/landing" element={<Landing />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
 
               {/* Authenticated / Main Application */}
               <Route path="/app" element={<Navigate to="/dashboard" replace />} />
