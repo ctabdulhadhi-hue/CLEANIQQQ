@@ -13,11 +13,9 @@ import {
   Award,
 } from 'lucide-react';
 import {
-  checkBackendHealth,
   getRecentDatasets,
   removeRecentDataset,
   getQualityScore,
-  type HealthResponse,
   type RecentDataset,
   type QualityScoreResponse,
 } from '../services/api';
@@ -30,33 +28,12 @@ import { OrderIdConflictCard } from '../components/OrderIdConflictCard';
 export function Dashboard() {
   const navigate = useNavigate();
   const backend = useBackendStatus();
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [loadingHealth, setLoadingHealth] = useState<boolean>(true);
 
   const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
 
   useEffect(() => {
     let isMounted = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    // Fetch backend health with auto-refresh
-    const fetchHealth = async () => {
-      try {
-        const res = await checkBackendHealth(5000);
-        if (isMounted) {
-          setHealth(res);
-          setLoadingHealth(false);
-        }
-      } catch {
-        if (isMounted) {
-          setLoadingHealth(false);
-        }
-      }
-    };
-
-    fetchHealth();
-    timer = setInterval(fetchHealth, 10000);
 
     const datasets = getRecentDatasets();
     setRecentDatasets(datasets);
@@ -77,7 +54,6 @@ export function Dashboard() {
 
     return () => {
       isMounted = false;
-      if (timer) clearInterval(timer);
     };
   }, []);
 
@@ -105,7 +81,7 @@ export function Dashboard() {
   // Calculate KPIs
   const datasetsProcessedCount = Math.max(
     recentDatasets.length,
-    health?.active_sessions ?? 0
+    backend.activeSessions
   );
 
   const totalIssuesFound = recentDatasets.reduce((sum, d) => sum + (d.issues_found || 0), 0);
@@ -226,7 +202,7 @@ export function Dashboard() {
               {animatedDatasetsCount}
             </div>
             <p className="text-xs text-[#8a8a86]">
-              {recentDatasets.length} cached locally · {health?.active_sessions ?? 0} active server session(s)
+              {recentDatasets.length} cached locally · {backend.activeSessions} active server session(s)
             </p>
           </TiltCard>
 
@@ -446,15 +422,23 @@ export function Dashboard() {
       {/* Backend API Connectivity Status Banner */}
       <div className="p-4 rounded-[14px] bg-white/[0.03] border border-[rgba(255,255,255,0.08)] flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${
+              backend.isReady
+                ? 'bg-emerald-400 animate-pulse'
+                : backend.isFailed
+                ? 'bg-rose-400'
+                : 'bg-amber-400 animate-pulse'
+            }`}
+          />
           <span className="text-xs text-[#f2f2f0] font-medium">FastAPI Local Engine</span>
         </div>
         <div className="text-xs text-[#8a8a86] flex items-center gap-2">
-          {loadingHealth ? (
+          {backend.isWaking ? (
             <span>Connecting...</span>
-          ) : health?.status === 'ok' ? (
+          ) : backend.isReady ? (
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Online (v{health.version})
+              <CheckCircle2 className="w-3.5 h-3.5" /> Online{backend.version ? ` (v${backend.version})` : ''}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-rose-400 font-medium">
