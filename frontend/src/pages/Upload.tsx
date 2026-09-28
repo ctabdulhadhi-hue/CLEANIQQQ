@@ -1,5 +1,5 @@
 import { useState, useRef, type DragEvent, type ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -9,8 +9,10 @@ import {
   ArrowRight,
   ShieldCheck,
   FileCode,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
-import { uploadDataset, saveRecentDataset } from '../services/api';
+import { uploadDataset, saveRecentDataset, checkBackendHealth } from '../services/api';
 
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.xlsx', '.xls'];
@@ -18,13 +20,14 @@ const ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.xlsx', '.xls'];
 export function Upload() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { backendConnected } = (useOutletContext<{ backendConnected: boolean | null }>() || {});
 
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<string>('');
-  const [error, setError] = useState<{ code?: string; message: string } | null>(null);
+  const [error, setError] = useState<{ code?: string; message: string; isNetwork?: boolean } | null>(null);
 
   const validateFile = (file: File): string | null => {
     const name = file.name.toLowerCase();
@@ -38,7 +41,7 @@ export function Upload() {
     return null;
   };
 
-  const handleFile = async (file: File) => {
+  const handleFile = async (file: File, retryCount = 0) => {
     setError(null);
     const validationError = validateFile(file);
     if (validationError) {
@@ -77,12 +80,31 @@ export function Upload() {
         navigate(`/dataset?id=${encodeURIComponent(response.dataset_id)}`);
       }, 700);
     } catch (err: any) {
+      const isNetwork = err.message?.toLowerCase().includes('network') || !err.code || err.code === 'UPLOAD_FAILED';
+      
+      // Auto-retry if backend was sleeping on Render (free tier cold start)
+      if (isNetwork && retryCount < 3) {
+        setStatusMessage(`Backend is waking up (Render cold start)... Retrying upload in 6s (${retryCount + 1}/3)`);
+        setProgress(20);
+        // Wait and check health before retrying
+        await new Promise((r) => setTimeout(r, 6000));
+        try {
+          await checkBackendHealth(8000);
+        } catch {
+          // Keep trying
+        }
+        return handleFile(file, retryCount + 1);
+      }
+
       setUploading(false);
       setProgress(0);
       setStatusMessage('');
       setError({
         code: err.code || 'UPLOAD_FAILED',
-        message: err.message || 'File upload failed. Please verify file integrity and try again.',
+        message: isNetwork
+          ? 'Network error during file upload. The backend on Render was asleep due to inactivity. Please wait a moment and click "Retry Upload".'
+          : (err.message || 'File upload failed. Please verify file integrity and try again.'),
+        isNetwork,
       });
     }
   };
@@ -128,6 +150,19 @@ export function Upload() {
         </p>
       </div>
 
+      {/* Backend Sleeping Warning Banner */}
+      {backendConnected === false && (
+        <div className="p-4 rounded-[14px] bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm flex items-center gap-3">
+          <Loader2 className="w-5 h-5 text-amber-400 shrink-0 animate-spin" />
+          <div>
+            <p className="font-semibold text-amber-100">Connecting to Backend...</p>
+            <p className="text-xs text-amber-300/80 mt-0.5">
+              Render's free tier server sleeps after 15 minutes of inactivity. It is spinning up now. Uploads will start automatically once connected.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Error Banner */}
       {error && (
         <div className="p-4 rounded-[14px] bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-start justify-between gap-3 shadow-lg">
@@ -136,11 +171,25 @@ export function Upload() {
             <div>
               <p className="font-semibold text-rose-200">Upload Rejected</p>
               <p className="text-xs text-rose-300/90 mt-0.5">{error.message}</p>
-              {error.code && (
-                <span className="inline-block mt-2 font-mono text-[10px] uppercase px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-400">
-                  Code: {error.code}
-                </span>
-              )}
+              <div className="flex items-center gap-2 mt-2">
+                {error.code && (
+                  <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-400">
+                    Code: {error.code}
+                  </span>
+                )}
+                {selectedFile && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleFile(selectedFile);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-[#ff6a3d] hover:bg-[#ff825c] text-white text-xs font-semibold shadow transition-all"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Retry Upload
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <button
