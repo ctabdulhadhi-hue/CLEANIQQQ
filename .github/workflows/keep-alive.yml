@@ -1,0 +1,16 @@
+name: Keep Render Backend Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free-tier sleep (inactivity timer is 15 mins)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend
+        run: |
+          echo "Pinging CleanIQ backend to prevent cold start..."
+          curl -s -S --max-time 60 https://cleaniqqq.onrender.com/health || true
