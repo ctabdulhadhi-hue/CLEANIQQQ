@@ -49,7 +49,7 @@ async function runHealthCheck(): Promise<boolean> {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const res: HealthResponse = await checkBackendHealth(15000);
-        if (res && res.status === 'ok') {
+        if (res && (res.status === 'ok' || !res.status)) {
           sharedStatus = 'online';
           sharedMessage = 'Backend Online';
           sharedActiveSessions = res.active_sessions || 0;

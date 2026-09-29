@@ -471,8 +471,47 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const target = baseUrl ? `${baseUrl}/health` : '/health';
-      const res = await fetch(target, { signal: controller.signal });
-      return await handleResponse<HealthResponse>(res);
+      const res = await fetch(target, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const error = new Error(`Health check returned HTTP ${res.status}`) as AppApiError;
+        error.status = res.status;
+        error.code = `HTTP_${res.status}`;
+        error.is5xx = res.status >= 500;
+        error.is4xx = res.status >= 400 && res.status < 500;
+        throw error;
+      }
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = { status: 'ok' };
+      }
+
+      const statusVal = typeof data?.status === 'string' ? data.status.toLowerCase() : 'ok';
+      return {
+        status: statusVal === 'ok' ? 'ok' : statusVal,
+        app: data?.service || data?.app || 'CleanIQ API',
+        version: data?.version || '1.0.0',
+        active_sessions: data?.active_sessions || 0,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        const timeoutErr = new Error('Backend health check timed out') as AppApiError;
+        timeoutErr.code = 'TIMEOUT_ERROR';
+        timeoutErr.isTimeout = true;
+        timeoutErr.isNetwork = true;
+        throw timeoutErr;
+      }
+      if (!err.status) {
+        err.isNetwork = true;
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -500,36 +539,12 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
         return prodRes;
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        const timeoutErr = new Error('Backend health check timed out') as AppApiError;
-        timeoutErr.code = 'TIMEOUT_ERROR';
-        timeoutErr.isTimeout = true;
-        timeoutErr.isNetwork = true;
-        throw timeoutErr;
-      }
-      if (!err.status) {
-        err.isNetwork = true;
-      }
       throw err;
     }
   }
 
   // Production or non-localhost: ping configured API_BASE directly
-  try {
-    return await ping(API_BASE);
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      const timeoutErr = new Error('Backend health check timed out') as AppApiError;
-      timeoutErr.code = 'TIMEOUT_ERROR';
-      timeoutErr.isTimeout = true;
-      timeoutErr.isNetwork = true;
-      throw timeoutErr;
-    }
-    if (!err.status) {
-      err.isNetwork = true;
-    }
-    throw err;
-  }
+  return await ping(API_BASE);
 }
 
 // ─── Upload ──────────────────────────────────────────────────────────────────
