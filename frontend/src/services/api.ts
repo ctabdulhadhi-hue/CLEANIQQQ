@@ -461,7 +461,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
-export async function checkBackendHealth(timeoutMs: number = 15000): Promise<HealthResponse> {
+export async function checkBackendHealth(timeoutMs: number = 60000): Promise<HealthResponse> {
   const isLocalHost =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -486,19 +486,16 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
         throw error;
       }
 
-      let data: any = {};
-      try {
-        data = await res.json();
-      } catch {
-        data = { status: 'ok' };
+      const data = await res.json();
+      if (!data || typeof data !== 'object' || data.status !== 'ok') {
+        throw new Error(`Unexpected health payload: ${JSON.stringify(data)}`);
       }
 
-      const statusVal = typeof data?.status === 'string' ? data.status.toLowerCase() : 'ok';
       return {
-        status: statusVal === 'ok' ? 'ok' : statusVal,
-        app: data?.service || data?.app || 'CleanIQ API',
-        version: data?.version || '1.0.0',
-        active_sessions: data?.active_sessions || 0,
+        status: 'ok',
+        app: data.service || data.app || 'CleanIQ API',
+        version: data.version || '1.0.0',
+        active_sessions: typeof data.active_sessions === 'number' ? data.active_sessions : 0,
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {

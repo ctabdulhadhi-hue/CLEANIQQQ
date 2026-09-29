@@ -45,8 +45,8 @@ async function runHealthCheck(): Promise<boolean> {
 
   activeCheckPromise = (async () => {
     try {
-      const res: HealthResponse = await checkBackendHealth(15000);
-      if (res && (res.status === 'ok' || !res.status)) {
+      const res: HealthResponse = await checkBackendHealth(60000);
+      if (res && res.status === 'ok') {
         sharedStatus = 'online';
         sharedMessage = 'Backend Online';
         sharedActiveSessions = res.active_sessions || 0;
@@ -57,7 +57,7 @@ async function runHealthCheck(): Promise<boolean> {
       throw new Error(`Unexpected health payload: ${JSON.stringify(res)}`);
     } catch (err: any) {
       const failureMode = err?.isTimeout
-        ? 'Timeout (exceeded 15s)'
+        ? 'Timeout (exceeded 60s)'
         : err?.status
         ? `Non-200 response (HTTP ${err.status})`
         : `Network error (${err?.message || 'Failed to fetch'})`;
