@@ -5,7 +5,7 @@ interface NavbarProps {
   backendConnected: boolean | null;
   activeSessions?: number;
   wakingUp?: boolean;
-  status?: 'checking' | 'waking' | 'ready' | 'failed';
+  status?: 'checking' | 'online' | 'offline' | 'ready' | 'failed' | 'waking';
   statusMessage?: string;
   onCheckStatus?: () => void;
 }
@@ -13,7 +13,6 @@ interface NavbarProps {
 export function Navbar({
   backendConnected,
   activeSessions = 0,
-  wakingUp = false,
   status,
   onCheckStatus,
 }: NavbarProps) {
@@ -28,31 +27,33 @@ export function Navbar({
     }
   }
 
-  const effectiveStatus = status || (backendConnected === true ? 'ready' : backendConnected === false ? 'failed' : wakingUp ? 'waking' : 'checking');
+  const effectiveStatus: 'checking' | 'online' | 'offline' =
+    status === 'online' || status === 'ready' || backendConnected === true
+      ? 'online'
+      : status === 'offline' || status === 'failed' || backendConnected === false
+      ? 'offline'
+      : 'checking';
 
   // Determine status dot color and label
   const getStatusDot = () => {
     switch (effectiveStatus) {
-      case 'ready':
+      case 'online':
         return 'bg-emerald-400 status-dot-pulse';
-      case 'waking':
       case 'checking':
         return 'bg-amber-400 animate-pulse';
-      case 'failed':
+      case 'offline':
         return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]';
     }
   };
 
   const getStatusLabel = () => {
     switch (effectiveStatus) {
-      case 'ready':
+      case 'online':
         return 'Backend Online';
-      case 'waking':
-        return 'Waking up backend...';
       case 'checking':
-        return 'Connecting...';
-      case 'failed':
-        return "Backend didn't respond";
+        return 'Checking backend...';
+      case 'offline':
+        return 'Backend Unavailable';
     }
   };
 
@@ -91,18 +92,19 @@ export function Navbar({
             <span className="text-[#f2f2f0]">{getStatusLabel()}</span>
           </div>
 
-          {effectiveStatus === 'ready' && activeSessions > 0 && (
+          {effectiveStatus === 'online' && activeSessions > 0 && (
             <span className="text-[#8a8a86] border-l border-[rgba(255,255,255,0.08)] pl-2 text-[11px]">
               {activeSessions} session{activeSessions === 1 ? '' : 's'}
             </span>
           )}
 
-          {effectiveStatus === 'failed' && onCheckStatus && (
+          {effectiveStatus === 'offline' && onCheckStatus && (
             <button
               onClick={onCheckStatus}
               className="ml-1 text-[11px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 transition-all active:scale-[0.98] font-semibold"
+              title="Retry Connection"
             >
-              Check status
+              Retry Connection
             </button>
           )}
         </div>

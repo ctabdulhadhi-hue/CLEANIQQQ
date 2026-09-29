@@ -399,19 +399,39 @@ export const API_URL = import.meta.env.VITE_API_URL
 const API_BASE = API_URL;
 const RECENT_DATASETS_KEY = 'cleaniq_recent_datasets';
 
+export interface AppApiError extends Error {
+  code: string;
+  status?: number;
+  is4xx?: boolean;
+  is5xx?: boolean;
+  isNetwork?: boolean;
+  isTimeout?: boolean;
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let message = 'Request failed';
+    let code = `HTTP_${res.status}`;
     try {
       const errJson = (await res.json()) as ApiError;
       if (errJson?.error?.message) message = errJson.error.message;
+      if (errJson?.error?.code) code = errJson.error.code;
     } catch {
-      // fallback
+      if (res.status >= 500) {
+        message = 'CleanIQ processing server encountered an internal error. Please try again.';
+      } else if (res.status === 404) {
+        message = 'The requested dataset or resource was not found.';
+      } else if (res.status === 400 || res.status === 422) {
+        message = 'Invalid request parameters or payload.';
+      }
     }
-    const err = new Error(message);
-    (err as any).code = `HTTP_${res.status}`;
+    const err = new Error(message) as AppApiError;
+    err.code = code;
+    err.status = res.status;
+    err.is4xx = res.status >= 400 && res.status < 500;
+    err.is5xx = res.status >= 500;
     throw err;
   }
   return res.json();
@@ -419,12 +439,24 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
-export async function checkBackendHealth(timeoutMs: number = 6000): Promise<HealthResponse> {
+export async function checkBackendHealth(timeoutMs: number = 5000): Promise<HealthResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
     return await handleResponse<HealthResponse>(res);
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      const timeoutErr = new Error('Backend health check timed out') as AppApiError;
+      timeoutErr.code = 'TIMEOUT_ERROR';
+      timeoutErr.isTimeout = true;
+      timeoutErr.isNetwork = true;
+      throw timeoutErr;
+    }
+    if (!err.status) {
+      err.isNetwork = true;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }

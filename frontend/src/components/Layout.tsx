@@ -9,9 +9,8 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-[#f2f2f0] flex flex-col font-sans selection:bg-[#ff6a3d]/30 selection:text-[#ffb08a]">
       <Navbar
-        backendConnected={backend.isReady}
+        backendConnected={backend.isOnline}
         activeSessions={backend.activeSessions}
-        wakingUp={backend.isWaking}
         status={backend.status}
         statusMessage={backend.message}
         onCheckStatus={backend.checkStatus}

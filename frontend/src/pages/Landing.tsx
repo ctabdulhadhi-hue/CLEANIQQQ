@@ -488,16 +488,16 @@ export function Landing() {
               type="button"
               id="try-sample-btn"
               onClick={handleTrySample}
-              disabled={loadingSample || !backend.isReady}
+              disabled={loadingSample || !backend.isOnline}
               title={
-                !backend.isReady
-                  ? backend.isFailed
-                    ? "Backend didn't respond"
-                    : 'Backend starting (free-tier cold start, usually 20-45s)...'
+                !backend.isOnline
+                  ? backend.isOffline
+                    ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
+                    : 'Checking backend...'
                   : 'Load demo sales dataset'
               }
               className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 border font-medium px-7 py-3.5 rounded-xl transition-all text-sm active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d] ${
-                !backend.isReady
+                !backend.isOnline
                   ? 'border-[rgba(255,255,255,0.08)] bg-white/[0.02] text-[#8a8a86] cursor-not-allowed opacity-60'
                   : 'border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-slate-200 cursor-pointer'
               }`}
@@ -510,9 +510,9 @@ export function Landing() {
               ) : (
                 <>
                   <span>Try with sample data</span>
-                  {!backend.isReady && (
+                  {!backend.isOnline && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-[#8a8a86]">
-                      {backend.isFailed ? 'Offline' : 'Waking...'}
+                      {backend.isOffline ? 'Offline' : 'Checking...'}
                     </span>
                   )}
                 </>
@@ -520,32 +520,30 @@ export function Landing() {
             </button>
           </div>
 
-          {/* Cold-start inline status alert (Min-height reserved to prevent layout shift) */}
+          {/* Backend offline/checking status banner (Min-height reserved to prevent layout shift) */}
           <div className="min-h-[48px] mt-6 flex items-center justify-center">
-            {!backend.isReady && (
+            {backend.isOffline ? (
               <div
-                className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-medium border ${
-                  backend.isFailed
-                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                }`}
+                id="landing-backend-offline-banner"
+                className="inline-flex flex-col sm:flex-row items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-medium border bg-rose-500/10 border-rose-500/30 text-rose-300 shadow-sm"
               >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    backend.isFailed ? 'bg-rose-400' : 'bg-amber-400 animate-pulse'
-                  }`}
-                />
-                <span>{backend.message}</span>
-                {backend.isFailed && (
-                  <button
-                    onClick={backend.checkStatus}
-                    className="ml-2 text-[11px] px-2.5 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-white font-semibold transition-all active:scale-[0.98]"
-                  >
-                    Check status
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)] shrink-0" />
+                  <span>Backend Unavailable — CleanIQ's processing server is temporarily unavailable</span>
+                </div>
+                <button
+                  onClick={backend.checkStatus}
+                  className="sm:ml-2 text-[11px] px-2.5 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-white font-semibold transition-all active:scale-[0.98]"
+                >
+                  Retry Connection
+                </button>
               </div>
-            )}
+            ) : backend.isChecking ? (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.03] border border-white/[0.08] text-[#8a8a86]">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>Checking backend...</span>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

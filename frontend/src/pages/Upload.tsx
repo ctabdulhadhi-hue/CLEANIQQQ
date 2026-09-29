@@ -1,5 +1,5 @@
 import { useState, useRef, type DragEvent, type ChangeEvent } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Loader2,
 } from 'lucide-react';
-import { uploadDataset, saveRecentDataset, checkBackendHealth } from '../services/api';
+import { uploadDataset, saveRecentDataset } from '../services/api';
+import { useBackendStatus } from '../hooks/useBackendStatus';
 
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.xlsx', '.xls'];
@@ -20,7 +21,7 @@ const ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.xlsx', '.xls'];
 export function Upload() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { backendConnected } = (useOutletContext<{ backendConnected: boolean | null }>() || {});
+  const backend = useBackendStatus();
 
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -41,7 +42,16 @@ export function Upload() {
     return null;
   };
 
-  const handleFile = async (file: File, retryCount = 0) => {
+  const handleFile = async (file: File) => {
+    if (!backend.isOnline) {
+      setError({
+        code: 'BACKEND_OFFLINE',
+        message: "Backend Unavailable — CleanIQ's processing server is temporarily unavailable. Please retry connection before uploading.",
+        isNetwork: true,
+      });
+      return;
+    }
+
     setError(null);
     const validationError = validateFile(file);
     if (validationError) {
@@ -80,29 +90,14 @@ export function Upload() {
         navigate(`/dataset?id=${encodeURIComponent(response.dataset_id)}`);
       }, 700);
     } catch (err: any) {
-      const isNetwork = err.message?.toLowerCase().includes('network') || !err.code || err.code === 'UPLOAD_FAILED';
-      
-      // Auto-retry if backend was sleeping on Render (free tier cold start)
-      if (isNetwork && retryCount < 3) {
-        setStatusMessage(`Backend is waking up (Render cold start)... Retrying upload in 6s (${retryCount + 1}/3)`);
-        setProgress(20);
-        // Wait and check health before retrying
-        await new Promise((r) => setTimeout(r, 6000));
-        try {
-          await checkBackendHealth(8000);
-        } catch {
-          // Keep trying
-        }
-        return handleFile(file, retryCount + 1);
-      }
-
       setUploading(false);
       setProgress(0);
       setStatusMessage('');
+      const isNetwork = err.message?.toLowerCase().includes('network') || !err.code || err.code === 'UPLOAD_FAILED';
       setError({
         code: err.code || 'UPLOAD_FAILED',
         message: isNetwork
-          ? 'Network error during file upload. The backend on Render was asleep due to inactivity. Please wait a moment and click "Retry Upload".'
+          ? "Network error during file upload. CleanIQ's processing server is temporarily unavailable. Please click 'Retry Upload' or check connection."
           : (err.message || 'File upload failed. Please verify file integrity and try again.'),
         isNetwork,
       });
@@ -122,12 +117,14 @@ export function Upload() {
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
+    if (!backend.isOnline) return;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFile(e.dataTransfer.files[0]);
     }
   };
 
   const onFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (!backend.isOnline) return;
     if (e.target.files && e.target.files.length > 0) {
       handleFile(e.target.files[0]);
     }
@@ -150,16 +147,37 @@ export function Upload() {
         </p>
       </div>
 
-      {/* Backend Sleeping Warning Banner */}
-      {backendConnected === false && (
-        <div className="p-4 rounded-[14px] bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm flex items-center gap-3">
-          <Loader2 className="w-5 h-5 text-amber-400 shrink-0 animate-spin" />
-          <div>
-            <p className="font-semibold text-amber-100">Connecting to Backend...</p>
-            <p className="text-xs text-amber-300/80 mt-0.5">
-              Render's free tier server sleeps after 15 minutes of inactivity. It is spinning up now. Uploads will start automatically once connected.
-            </p>
+      {/* Backend Unavailable Error State Banner */}
+      {backend.isOffline && (
+        <div
+          id="upload-backend-offline-banner"
+          className="p-4 rounded-[14px] bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg"
+        >
+          <div className="flex items-center gap-3">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)] shrink-0" />
+            <div>
+              <p className="font-semibold text-rose-200">Backend Unavailable</p>
+              <p className="text-xs text-rose-300/90 mt-0.5">
+                CleanIQ's processing server is temporarily unavailable.
+              </p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => backend.checkStatus()}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-white text-xs font-semibold transition-all active:scale-[0.98] shrink-0"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      )}
+
+      {/* Backend Checking Indicator */}
+      {backend.isChecking && (
+        <div className="p-3.5 rounded-[14px] bg-white/[0.03] border border-white/[0.08] text-xs text-[#8a8a86] flex items-center gap-2.5">
+          <Loader2 className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+          <span>Checking backend connection...</span>
         </div>
       )}
 
@@ -177,7 +195,7 @@ export function Upload() {
                     Code: {error.code}
                   </span>
                 )}
-                {selectedFile && (
+                {selectedFile && backend.isOnline && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -206,17 +224,20 @@ export function Upload() {
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={() => !uploading && fileInputRef.current?.click()}
-        className={`relative group rounded-[14px] border-2 border-dashed transition-all duration-200 p-12 text-center cursor-pointer overflow-hidden ${
-          isDragging
-            ? 'border-[#ff6a3d] bg-[#ff6a3d]/10 scale-[1.01]'
-            : 'border-[rgba(255,255,255,0.08)] hover:border-[#ff6a3d]/50 bg-white/[0.02] hover:bg-white/[0.04]'
+        onClick={() => !uploading && backend.isOnline && fileInputRef.current?.click()}
+        className={`relative group rounded-[14px] border-2 border-dashed transition-all duration-200 p-12 text-center overflow-hidden ${
+          !backend.isOnline
+            ? 'border-[rgba(255,255,255,0.06)] bg-white/[0.01] cursor-not-allowed opacity-60'
+            : isDragging
+            ? 'border-[#ff6a3d] bg-[#ff6a3d]/10 scale-[1.01] cursor-pointer'
+            : 'border-[rgba(255,255,255,0.08)] hover:border-[#ff6a3d]/50 bg-white/[0.02] hover:bg-white/[0.04] cursor-pointer'
         } ${uploading ? 'pointer-events-none opacity-80' : ''}`}
       >
         <input
           ref={fileInputRef}
           type="file"
           accept=".csv,.tsv,.xlsx,.xls"
+          disabled={!backend.isOnline || uploading}
           onChange={onFileInputChange}
           className="hidden"
         />
@@ -241,10 +262,19 @@ export function Upload() {
           <div>
             <button
               type="button"
-              disabled={uploading}
-              className="btn-primary inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
+              disabled={uploading || !backend.isOnline}
+              title={
+                !backend.isOnline
+                  ? backend.isOffline
+                    ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
+                    : 'Checking backend...'
+                  : 'Choose file to upload'
+              }
+              className={`btn-primary inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold ${
+                !backend.isOnline ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
-              <span>Choose File from Computer</span>
+              <span>{backend.isOnline ? 'Choose File from Computer' : backend.isOffline ? 'Backend Unavailable' : 'Checking Backend...'}</span>
               <ArrowRight className="w-4 h-4 ml-0.5" />
             </button>
           </div>

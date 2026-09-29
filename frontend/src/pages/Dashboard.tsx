@@ -11,6 +11,7 @@ import {
   Layers,
   AlertTriangle,
   Award,
+  RefreshCw,
 } from 'lucide-react';
 import {
   getRecentDatasets,
@@ -31,6 +32,13 @@ export function Dashboard() {
 
   const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
+
+  useEffect(() => {
+    // If status is still checking/unknown on direct navigation, trigger check
+    if (backend.isChecking) {
+      backend.checkStatus();
+    }
+  }, [backend.isChecking, backend.checkStatus]);
 
   useEffect(() => {
     let isMounted = true;
@@ -103,31 +111,25 @@ export function Dashboard() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      {/* Backend Cold-Start Status Banner */}
-      {!backend.isReady && (
+      {/* Backend Unavailable Error State Banner */}
+      {backend.isOffline && (
         <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${
-            backend.isFailed
-              ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-          }`}
+          id="backend-offline-banner"
+          className="p-4 rounded-xl border bg-rose-500/10 border-rose-500/30 text-rose-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg"
         >
           <div className="flex items-center gap-3">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                backend.isFailed ? 'bg-rose-400' : 'bg-amber-400 animate-pulse'
-              }`}
-            />
-            <p className="text-xs font-medium">{backend.message}</p>
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)] shrink-0" />
+            <p className="text-xs font-medium">
+              Backend Unavailable — CleanIQ's processing server is temporarily unavailable
+            </p>
           </div>
-          {backend.isFailed && (
-            <button
-              onClick={backend.checkStatus}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-white transition-all active:scale-[0.98]"
-            >
-              Check status
-            </button>
-          )}
+          <button
+            onClick={() => backend.checkStatus()}
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-white transition-all active:scale-[0.98] shrink-0"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Connection</span>
+          </button>
         </div>
       )}
 
@@ -146,7 +148,7 @@ export function Dashboard() {
             previewed and explicitly approved before being committed.
           </p>
           <div className="pt-2 flex flex-wrap items-center gap-3">
-            {backend.isReady ? (
+            {backend.isOnline ? (
               <Link
                 to="/upload"
                 className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold active:scale-[0.98] transition-transform"
@@ -158,11 +160,17 @@ export function Dashboard() {
             ) : (
               <div
                 className="btn-primary opacity-50 cursor-not-allowed inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold select-none"
-                title={backend.isFailed ? "Backend didn't respond. Click Check Status above." : "Backend is starting (free-tier cold start, usually 20-45s)..."}
+                title={
+                  backend.isOffline
+                    ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
+                    : "Checking backend..."
+                }
               >
                 <UploadCloud className="w-4 h-4" />
                 <span>Upload Dataset</span>
-                <span className="text-[10px] font-normal opacity-80">(Waking backend...)</span>
+                <span className="text-[10px] font-normal opacity-80">
+                  ({backend.isOffline ? 'Offline' : 'Checking...'})
+                </span>
               </div>
             )}
             {recentDatasets.length > 0 && (
@@ -424,26 +432,34 @@ export function Dashboard() {
         <div className="flex items-center gap-3">
           <div
             className={`w-2.5 h-2.5 rounded-full ${
-              backend.isReady
-                ? 'bg-emerald-400 animate-pulse'
-                : backend.isFailed
-                ? 'bg-rose-400'
+              backend.isOnline
+                ? 'bg-emerald-400 status-dot-pulse'
+                : backend.isOffline
+                ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]'
                 : 'bg-amber-400 animate-pulse'
             }`}
           />
-          <span className="text-xs text-[#f2f2f0] font-medium">FastAPI Local Engine</span>
+          <span className="text-xs text-[#f2f2f0] font-medium">FastAPI Engine</span>
         </div>
         <div className="text-xs text-[#8a8a86] flex items-center gap-2">
-          {backend.isWaking ? (
-            <span>Connecting...</span>
-          ) : backend.isReady ? (
+          {backend.isChecking ? (
+            <span>Checking backend...</span>
+          ) : backend.isOnline ? (
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Online{backend.version ? ` (v${backend.version})` : ''}
+              <CheckCircle2 className="w-3.5 h-3.5" /> Backend Online
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-rose-400 font-medium">
-              <XCircle className="w-3.5 h-3.5" /> Offline
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-rose-400 font-medium">
+                <XCircle className="w-3.5 h-3.5" /> Backend Unavailable
+              </span>
+              <button
+                onClick={() => backend.checkStatus()}
+                className="text-[11px] px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 font-semibold transition-all active:scale-[0.98]"
+              >
+                Retry Connection
+              </button>
+            </div>
           )}
         </div>
       </div>
