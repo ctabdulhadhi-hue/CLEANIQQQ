@@ -215,21 +215,21 @@ export function Landing() {
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-[rgba(255,255,255,0.08)] text-xs min-h-[32px]">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  backend.isReady
+                  backend.isOnline
                     ? 'bg-emerald-400 status-dot-pulse'
-                    : backend.isFailed
+                    : backend.isOffline
                     ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]'
                     : 'bg-amber-400 animate-pulse'
                 }`}
               />
               <span className="text-[#f2f2f0] text-[11px] font-medium">
-                {backend.isReady
+                {backend.isOnline
                   ? 'Backend Online'
-                  : backend.isFailed
-                  ? "Backend didn't respond"
-                  : 'Waking backend...'}
+                  : backend.isOffline
+                  ? 'Backend Unavailable'
+                  : 'Checking backend...'}
               </span>
-              {backend.isFailed && (
+              {backend.isOffline && (
                 <button
                   onClick={backend.checkStatus}
                   className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30 font-semibold active:scale-[0.98] transition-all"
@@ -307,16 +307,22 @@ export function Landing() {
           <div className="flex items-center gap-2">
             <span
               className={`w-2 h-2 rounded-full ${
-                backend.isReady
+                backend.isOnline
                   ? 'bg-emerald-400 status-dot-pulse'
-                  : backend.isFailed
+                  : backend.isOffline
                   ? 'bg-rose-400'
                   : 'bg-amber-400 animate-pulse'
               }`}
             />
-            <span className="text-[#f2f2f0]">{backend.message}</span>
+            <span className="text-[#f2f2f0]">
+              {backend.isOnline
+                ? 'Backend Online'
+                : backend.isOffline
+                ? 'Backend Unavailable'
+                : 'Checking backend...'}
+            </span>
           </div>
-          {backend.isFailed && (
+          {backend.isOffline && (
             <button
               onClick={backend.checkStatus}
               className="text-[11px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold"

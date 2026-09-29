@@ -391,8 +391,8 @@ export interface CorrelationResponse {
 }
 
 
-export const API_URL = (() => {
-  // In browser on localhost / 127.0.0.1, route via local Vite dev proxy (/api & /health -> 127.0.0.1:8000)
+export let API_URL = (() => {
+  // In browser on localhost / 127.0.0.1, default to local Vite dev proxy (/api & /health -> 127.0.0.1:8000)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
     if (host === 'localhost' || host === '127.0.0.1') {
@@ -408,7 +408,17 @@ export const API_URL = (() => {
 
   return 'https://cleaniqqq.onrender.com';
 })();
-const API_BASE = API_URL;
+
+let API_BASE = API_URL;
+
+export function getApiBaseUrl(): string {
+  return API_BASE;
+}
+
+export function setApiBaseUrl(url: string): void {
+  API_BASE = url.replace(/\/+$/, '');
+  API_URL = API_BASE;
+}
 const RECENT_DATASETS_KEY = 'cleaniq_recent_datasets';
 
 export interface AppApiError extends Error {
@@ -452,11 +462,61 @@ async function handleResponse<T>(res: Response): Promise<T> {
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 export async function checkBackendHealth(timeoutMs: number = 15000): Promise<HealthResponse> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  const ping = async (baseUrl: string): Promise<HealthResponse> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const target = baseUrl ? `${baseUrl}/health` : '/health';
+      const res = await fetch(target, { signal: controller.signal });
+      return await handleResponse<HealthResponse>(res);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // If running locally in browser
+  if (isLocalHost) {
+    // 1. Try local dev server proxy / local backend first
+    try {
+      const localRes = await ping('');
+      if (localRes && localRes.status === 'ok') {
+        setApiBaseUrl('');
+        return localRes;
+      }
+    } catch {
+      // Local backend on port 8000 not running, gracefully fallback to live Render backend
+    }
+
+    // 2. Fallback to production cloud backend so local frontend remains 100% usable
+    const prodTarget = import.meta.env.VITE_API_URL || 'https://cleaniqqq.onrender.com';
+    try {
+      const prodRes = await ping(prodTarget);
+      if (prodRes && prodRes.status === 'ok') {
+        setApiBaseUrl(prodTarget);
+        return prodRes;
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        const timeoutErr = new Error('Backend health check timed out') as AppApiError;
+        timeoutErr.code = 'TIMEOUT_ERROR';
+        timeoutErr.isTimeout = true;
+        timeoutErr.isNetwork = true;
+        throw timeoutErr;
+      }
+      if (!err.status) {
+        err.isNetwork = true;
+      }
+      throw err;
+    }
+  }
+
+  // Production or non-localhost: ping configured API_BASE directly
   try {
-    const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
-    return await handleResponse<HealthResponse>(res);
+    return await ping(API_BASE);
   } catch (err: any) {
     if (err.name === 'AbortError') {
       const timeoutErr = new Error('Backend health check timed out') as AppApiError;
@@ -469,8 +529,6 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
       err.isNetwork = true;
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
