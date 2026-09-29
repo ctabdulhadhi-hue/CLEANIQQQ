@@ -5,12 +5,14 @@ Every operation can be previewed (generating a diff) before being applied.
 """
 
 import math
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
 import numpy as np
 
 from app.core.errors import AppError
 from app.models.dataset import DiffRow
+from app.services.missing_detector import MissingValueService
+
 
 
 SUPPORTED_OPERATIONS = [
@@ -124,13 +126,58 @@ def _generate_diffs(
 # ─── Operation Implementations ───────────────────────────────────────────────
 
 
+def _detect_duplicate_mask(
+    df: pd.DataFrame,
+    subset: Optional[List[str]],
+    keep: str = "first",
+    ignore_case: bool = False,
+    trim_whitespace: bool = False,
+) -> pd.Series:
+    """Computes duplicate mask with optional case-insensitivity and whitespace normalization."""
+    cols = subset if subset else list(df.columns)
+    valid_keep = keep if keep in ("first", "last", False) else "first"
+
+    if not ignore_case and not trim_whitespace:
+        try:
+            return df.duplicated(subset=cols, keep=valid_keep)
+        except TypeError:
+            return df[cols].astype(str).duplicated(keep=valid_keep)
+
+    comp_df = pd.DataFrame(index=df.index)
+    for c in cols:
+        s = df[c]
+        if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
+            str_s = s.astype(str)
+            if trim_whitespace:
+                str_s = str_s.str.strip()
+            if ignore_case:
+                str_s = str_s.str.lower()
+            comp_df[c] = str_s
+        else:
+            comp_df[c] = s
+    return comp_df.duplicated(keep=valid_keep)
+
+
 def _preview_drop_duplicates(
     df: pd.DataFrame, columns: List[str], params: Dict[str, Any]
 ) -> Tuple[pd.DataFrame, List[str], str]:
-    cols = columns if columns else None
-    result = df.drop_duplicates(subset=cols, keep="first")
-    dropped = len(df) - len(result)
-    summary = f"Found {dropped} duplicate row(s) to remove"
+    cols = columns if columns else list(df.columns)
+    keep = params.get("keep", "first")
+    ignore_case = bool(params.get("ignore_case", False))
+    trim_whitespace = bool(params.get("trim_whitespace", False))
+
+    dup_mask = _detect_duplicate_mask(
+        df,
+        subset=cols,
+        keep=keep,
+        ignore_case=ignore_case,
+        trim_whitespace=trim_whitespace,
+    )
+    result = df[~dup_mask].copy()
+    dropped = int(dup_mask.sum())
+    summary = f"Found {dropped} duplicate row(s) to remove (keeping {keep})"
+    if ignore_case or trim_whitespace:
+        summary += f" [case-insensitive: {ignore_case}, trim-whitespace: {trim_whitespace}]"
     affected_cols = list(df.columns) if not columns else columns
     return result, affected_cols, summary
 
@@ -138,35 +185,29 @@ def _preview_drop_duplicates(
 def _preview_fill_missing(
     df: pd.DataFrame, columns: List[str], params: Dict[str, Any]
 ) -> Tuple[pd.DataFrame, List[str], str]:
-    strategy = params.get("strategy", "mean")
+    strategy = params.get("strategy", params.get("method", "mean"))
     fill_value = params.get("value", None)
+    custom_markers = params.get("null_markers", None)
     result = df.copy()
     affected_cols = []
+    total_filled = 0
 
     for col in columns:
-        if result[col].isna().sum() == 0:
+        col_missing = MissingValueService.count_missing(result[col], custom_markers=custom_markers)
+        if col_missing == 0:
             continue
+
+        imputed_series, count, _, _ = MissingValueService.safe_impute(
+            result[col],
+            col_name=col,
+            strategy=strategy,
+            value=fill_value,
+            custom_markers=custom_markers,
+        )
+        result[col] = imputed_series
         affected_cols.append(col)
+        total_filled += count
 
-        if strategy == "mean" and pd.api.types.is_numeric_dtype(result[col]):
-            result[col] = result[col].fillna(result[col].mean())
-        elif strategy == "median" and pd.api.types.is_numeric_dtype(result[col]):
-            result[col] = result[col].fillna(result[col].median())
-        elif strategy == "mode":
-            mode_val = result[col].mode()
-            if len(mode_val) > 0:
-                result[col] = result[col].fillna(mode_val.iloc[0])
-        elif strategy == "custom" and fill_value is not None:
-            result[col] = result[col].fillna(fill_value)
-        elif strategy == "mean":
-            # Non-numeric fallback to mode
-            mode_val = result[col].mode()
-            if len(mode_val) > 0:
-                result[col] = result[col].fillna(mode_val.iloc[0])
-
-    total_filled = sum(
-        (df[c].isna().sum() - result[c].isna().sum()) for c in affected_cols
-    )
     summary = f"Filled {total_filled} missing cell(s) using '{strategy}' strategy across {len(affected_cols)} column(s)"
     return result, affected_cols, summary
 
@@ -175,10 +216,25 @@ def _preview_drop_missing_rows(
     df: pd.DataFrame, columns: List[str], params: Dict[str, Any]
 ) -> Tuple[pd.DataFrame, List[str], str]:
     how = params.get("how", "any")  # 'any' or 'all'
-    result = df.dropna(subset=columns if columns else None, how=how)
-    dropped = len(df) - len(result)
-    summary = f"Dropping {dropped} row(s) with {'any' if how == 'any' else 'all'} missing values"
-    return result, columns if columns else list(df.columns), summary
+    custom_markers = params.get("null_markers", None)
+    cols = columns if columns else list(df.columns)
+
+    if not cols or len(df) == 0:
+        return df.copy(), list(df.columns), "No rows to drop"
+
+    masks = [MissingValueService.get_missing_mask(df[c], custom_markers=custom_markers) for c in cols]
+    combined_mask = pd.concat(masks, axis=1)
+
+    if how == "all":
+        row_has_missing = combined_mask.all(axis=1)
+    else:
+        row_has_missing = combined_mask.any(axis=1)
+
+    result = df[~row_has_missing].copy()
+    dropped = int(row_has_missing.sum())
+    summary = f"Dropping {dropped} row(s) with {'any' if how == 'any' else 'all'} missing values across {len(cols)} column(s)"
+    return result, cols, summary
+
 
 
 def _preview_trim_whitespace(

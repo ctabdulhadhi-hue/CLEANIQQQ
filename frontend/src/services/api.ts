@@ -81,6 +81,11 @@ export interface CleanOperationResponse {
   after_summary: string;
   operation_id: string | null;
   sample_rows?: Record<string, any>[];
+  original_missing_count?: number;
+  imputed_count?: number;
+  remaining_missing_count?: number;
+  detected_dtype?: string;
+  chosen_strategy?: string;
 }
 
 export interface OperationLogEntry {
@@ -678,13 +683,15 @@ export async function getColumnStats(datasetId: string): Promise<ColumnStatsResp
 export async function cleanMissing(
   datasetId: string,
   column: string,
-  method: 'remove' | 'mean' | 'median' | 'mode' | 'custom',
+  method: 'remove' | 'mean' | 'median' | 'mode' | 'custom' | 'constant' | 'ffill' | 'bfill' | 'none',
   value?: any,
   preview: boolean = true,
+  null_markers?: string[],
 ): Promise<CleanOperationResponse> {
   const url = `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/missing?preview=${preview}`;
   const body: any = { column, method };
   if (value !== undefined && value !== null) body.value = value;
+  if (null_markers && null_markers.length > 0) body.null_markers = null_markers;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -695,15 +702,24 @@ export async function cleanMissing(
 
 // ─── Clean: Duplicates ───────────────────────────────────────────────────────
 
+export interface CleanDuplicatesOptions {
+  columns?: string[];
+  keep?: 'first' | 'last';
+  ignore_case?: boolean;
+  trim_whitespace?: boolean;
+}
+
 export async function cleanDuplicates(
   datasetId: string,
   preview: boolean = true,
+  options?: CleanDuplicatesOptions,
 ): Promise<CleanOperationResponse> {
   const url = `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/duplicates?preview=${preview}`;
+  const body = options || {};
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify(body),
   });
   return handleResponse<CleanOperationResponse>(res);
 }

@@ -10,6 +10,7 @@ from app.services.text_cleaner import TextCleanerService
 from app.services.type_detector import TypeDetectorService
 from app.services.outliers import OutlierDetectorService
 from app.services.order_validator import OrderValidatorService
+from app.services.missing_detector import MissingValueService
 
 
 class QualityScoreService:
@@ -43,17 +44,18 @@ class QualityScoreService:
 
         # ── 1. Completeness Check (Missing Values) ───────────────────────
         if total_cells == 0:
-            completeness = 1.0
-            completeness_detail = "No data to evaluate"
+            completeness = 0.0
+            completeness_detail = "Empty dataset (0 records)"
             missing_cells = 0
         else:
-            missing_series = df.isna().sum()
-            missing_cells = int(missing_series.sum())
+            missing_by_col = {col: MissingValueService.count_missing(df[col]) for col in df.columns}
+            missing_cells = int(sum(missing_by_col.values()))
             completeness = 1.0 - (missing_cells / total_cells)
+            completeness = max(0.0, completeness)
             completeness_detail = f"{missing_cells} missing cell(s) out of {total_cells} total"
 
             if missing_cells > 0:
-                cols_with_missing = [str(c) for c in df.columns if missing_series[c] > 0]
+                cols_with_missing = [str(c) for c in df.columns if missing_by_col[c] > 0]
                 issues_list.append({
                     "category": "Missing Values",
                     "severity": "warning" if (missing_cells / total_cells) < 0.1 else "error",
@@ -87,8 +89,8 @@ class QualityScoreService:
 
         # ── 3. Uniqueness Check (Duplicate Rows) ─────────────────────────
         if row_count == 0:
-            uniqueness = 1.0
-            uniqueness_detail = "No rows to evaluate"
+            uniqueness = 0.0
+            uniqueness_detail = "Empty dataset (0 rows)"
             dup_count = 0
         else:
             try:
@@ -295,8 +297,8 @@ class QualityScoreService:
         # ── Calculate Consistency Score ──────────────────────────────────
         total_inconsistent = inconsistent_cat_count + whitespace_issues_count
         if total_cells == 0:
-            consistency = 1.0
-            consistency_detail = "No data to evaluate"
+            consistency = 0.0
+            consistency_detail = "Empty dataset (0 records)"
         else:
             consistency = 1.0 - (total_inconsistent / total_cells)
             consistency = max(0.0, consistency)
@@ -304,21 +306,24 @@ class QualityScoreService:
 
         # ── Calculate Validity Score ─────────────────────────────────────
         if total_cells == 0:
-            validity = 1.0
-            validity_detail = "No data to evaluate"
+            validity = 0.0
+            validity_detail = "Empty dataset (0 records)"
         else:
             validity = 1.0 - (invalid_values_count / total_cells)
             validity = max(0.0, validity)
             validity_detail = f"{invalid_values_count} invalid value(s) detected"
 
         # ── Overall Score ────────────────────────────────────────────────
-        overall = (
-            cls.WEIGHTS["completeness"] * completeness
-            + cls.WEIGHTS["consistency"] * consistency
-            + cls.WEIGHTS["validity"] * validity
-            + cls.WEIGHTS["uniqueness"] * uniqueness
-        )
-        overall = round(max(0.0, min(1.0, overall)), 4)
+        if total_cells == 0:
+            overall = 0.0
+        else:
+            overall = (
+                cls.WEIGHTS["completeness"] * completeness
+                + cls.WEIGHTS["consistency"] * consistency
+                + cls.WEIGHTS["validity"] * validity
+                + cls.WEIGHTS["uniqueness"] * uniqueness
+            )
+            overall = round(max(0.0, min(1.0, overall)), 4)
 
         sub_scores = [
             {

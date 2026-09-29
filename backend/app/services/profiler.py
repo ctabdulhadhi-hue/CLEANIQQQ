@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 
 from app.models.dataset import ColumnProfile, DatasetProfileResponse, ColumnStatistics, ColumnStatsResponse
+from app.services.missing_detector import MissingValueService
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -113,7 +114,7 @@ def profile_dataframe(df: pd.DataFrame, dataset_id: str) -> DatasetProfileRespon
         col_type = classify_column_type(series)
         type_summary[col_type] = type_summary.get(col_type, 0) + 1
 
-        missing_count = int(series.isna().sum())
+        missing_count = MissingValueService.count_missing(series)
         missing_pct = round((missing_count / row_count) * 100, 2) if row_count > 0 else 0.0
 
         try:
@@ -158,7 +159,7 @@ def column_stats_for_dataframe(df: pd.DataFrame, dataset_id: str) -> ColumnStats
         series = df[col]
         col_type = classify_column_type(series)
 
-        missing_count = int(series.isna().sum())
+        missing_count = MissingValueService.count_missing(series)
         missing_pct = round((missing_count / row_count) * 100, 2) if row_count > 0 else 0.0
 
         try:

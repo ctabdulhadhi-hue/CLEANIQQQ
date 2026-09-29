@@ -59,17 +59,36 @@ class CleanMissingRequest(BaseModel):
     column: str = Field(..., description="Target column name")
     method: str = Field(
         ...,
-        description="Fill method: remove | mean | median | mode | custom",
+        description="Fill method: remove | mean | median | mode | custom | constant | ffill | bfill | none",
     )
     value: Optional[Any] = Field(
         default=None,
-        description="Custom fill value (required when method='custom')",
+        description="Custom fill value (required when method='custom' or 'constant')",
+    )
+    null_markers: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of custom null markers (e.g. ['NA', 'N/A', 'NULL'])",
     )
 
 
 class CleanDuplicatesRequest(BaseModel):
-    """Request body for POST /clean/duplicates (optional, can be empty)"""
-    pass
+    """Request body for POST /clean/duplicates (optional, configurable)"""
+    columns: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of columns to check for duplicates (default: all columns)",
+    )
+    keep: str = Field(
+        default="first",
+        description="Which duplicate occurrence to keep: first | last",
+    )
+    ignore_case: bool = Field(
+        default=False,
+        description="Treat text case-insensitively when identifying duplicates",
+    )
+    trim_whitespace: bool = Field(
+        default=False,
+        description="Ignore leading/trailing whitespace when identifying duplicates",
+    )
 
 
 class DiffRow(BaseModel):
@@ -92,6 +111,30 @@ class CleanOperationResponse(BaseModel):
     sample_rows: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Sample of affected rows (e.g. duplicate rows for preview)",
+    )
+    original_missing_count: Optional[int] = Field(
+        default=None,
+        description="Count of missing cells before cleaning",
+    )
+    imputed_count: Optional[int] = Field(
+        default=None,
+        description="Count of missing cells successfully imputed",
+    )
+    remaining_missing_count: Optional[int] = Field(
+        default=None,
+        description="Count of missing cells remaining in the column after cleaning",
+    )
+    detected_dtype: Optional[str] = Field(
+        default=None,
+        description="Detected data type of the column",
+    )
+    chosen_strategy: Optional[str] = Field(
+        default=None,
+        description="Imputation or cleaning strategy chosen",
+    )
+    diffs: Optional[List[DiffRow]] = Field(
+        default=None,
+        description="Sample cell diffs showing before and after changes",
     )
 
 

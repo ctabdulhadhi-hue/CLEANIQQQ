@@ -6,6 +6,8 @@ from app.services.type_detector import TypeDetectorService
 from app.services.text_cleaner import TextCleanerService
 from app.services.calculator import SafeColumnCalculator
 from app.services.outliers import OutlierDetectorService
+from app.services.missing_detector import MissingValueService
+from app.services.cleaner import _detect_duplicate_mask
 
 logger = logging.getLogger(__name__)
 
@@ -27,39 +29,38 @@ class ReplayEngine:
               col = params.get("column")
               method = params.get("method")
               val = params.get("value")
+              null_markers = params.get("null_markers")
 
               if not col or col not in result_df.columns:
                   return result_df
 
-              if method == "remove":
-                  result_df = result_df.dropna(subset=[col]).reset_index(drop=True)
-              elif method == "mean":
-                  num_series = pd.to_numeric(result_df[col], errors="coerce")
-                  mean_val = float(num_series.mean()) if not num_series.dropna().empty else 0
-                  result_df[col] = result_df[col].fillna(mean_val)
-              elif method == "median":
-                  num_series = pd.to_numeric(result_df[col], errors="coerce")
-                  med_val = float(num_series.median()) if not num_series.dropna().empty else 0
-                  result_df[col] = result_df[col].fillna(med_val)
-              elif method == "mode":
-                  mode_series = result_df[col].mode()
-                  mode_val = mode_series.iloc[0] if not mode_series.empty else ""
-                  result_df[col] = result_df[col].fillna(mode_val)
-              elif method == "custom":
-                  if val is not None:
-                      fill_val = val
-                      if pd.api.types.is_numeric_dtype(result_df[col]):
-                          try:
-                              fill_val = float(fill_val)
-                          except (ValueError, TypeError):
-                              pass
-                      result_df[col] = result_df[col].fillna(fill_val)
+              if method in ("remove", "drop"):
+                  mask = MissingValueService.get_missing_mask(result_df[col], custom_markers=null_markers)
+                  result_df = result_df[~mask].reset_index(drop=True)
+              else:
+                  imputed_series, _, _, _ = MissingValueService.safe_impute(
+                      result_df[col],
+                      col_name=col,
+                      strategy=method,
+                      value=val,
+                      custom_markers=null_markers,
+                  )
+                  result_df[col] = imputed_series
 
           elif operation == "clean_duplicates":
-              try:
-                  result_df = result_df.drop_duplicates(keep="first").reset_index(drop=True)
-              except TypeError:
-                  result_df = result_df.astype(str).drop_duplicates(keep="first").reset_index(drop=True)
+              cols = params.get("columns")
+              keep = params.get("keep", "first")
+              ignore_case = bool(params.get("ignore_case", False))
+              trim_whitespace = bool(params.get("trim_whitespace", False))
+              dup_mask = _detect_duplicate_mask(
+                  result_df,
+                  subset=cols,
+                  keep=keep,
+                  ignore_case=ignore_case,
+                  trim_whitespace=trim_whitespace,
+              )
+              result_df = result_df[~dup_mask].reset_index(drop=True)
+
 
           elif operation == "convert_type":
               col = params.get("column")

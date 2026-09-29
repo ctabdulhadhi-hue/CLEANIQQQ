@@ -57,7 +57,8 @@ from app.models.dataset import (
     OrderIdAnalysisResponse,
     GenerateUniqueOrderIdsRequest,
 )
-from app.services.cleaner import preview_operation, apply_operation
+from app.services.cleaner import preview_operation, apply_operation, _detect_duplicate_mask
+from app.services.missing_detector import MissingValueService
 from app.services.order_validator import OrderValidatorService
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["Datasets"])
@@ -96,6 +97,29 @@ def _safe_value(val: Any) -> Any:
     if isinstance(val, (pd.Timestamp, datetime)):
         return val.isoformat()
     return val
+
+
+def sanitize_for_spreadsheet(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prevents spreadsheet formula injection (CWE-1236) in exported CSV/Excel files.
+    Prefixes text cells starting with '=', '+', '-', '@', '\t', '\r' with a single quote (')
+    if the value is text and not a legitimate numeric value.
+    """
+    export_df = df.copy()
+    trigger_chars = ("=", "+", "-", "@", "\t", "\r")
+    for col in export_df.columns:
+        s = export_df[col]
+        if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
+            def sanitize_cell(v):
+                if isinstance(v, str) and v.startswith(trigger_chars):
+                    try:
+                        float(v)
+                        return v
+                    except ValueError:
+                        return f"'{v}"
+                return v
+            export_df[col] = s.map(sanitize_cell)
+    return export_df
 
 
 # ─── Upload ───────────────────────────────────────────────────────────────────
@@ -304,7 +328,7 @@ async def clean_missing(
     """
     Handle missing values for a specific column.
 
-    preview=true  → compute effect without mutating (e.g. "median = 24, 23 rows would be filled")
+    preview=true  → compute effect without mutating
     preview=false → apply the fill/remove, append to operation log
     """
     session = session_store.get_session(dataset_id)
@@ -325,94 +349,65 @@ async def clean_missing(
             status_code=400,
         )
 
-    missing_count = int(df[col].isna().sum())
+    null_markers = body.null_markers
+    missing_count = MissingValueService.count_missing(df[col], custom_markers=null_markers)
+    detected_dtype = str(df[col].dtype)
+    method = body.method.lower().strip()
+    rows_before = len(df)
+
     if missing_count == 0:
         return CleanOperationResponse(
             affected_rows=0,
+            original_missing_count=0,
+            imputed_count=0,
+            remaining_missing_count=0,
+            detected_dtype=detected_dtype,
+            chosen_strategy=method,
             before_summary=f"Column '{col}' has 0 missing values",
             after_summary="No changes needed",
             operation_id=None,
         )
 
-    method = body.method
-    rows_before = len(df)
-
-    if method == "remove":
-        result_df = df.dropna(subset=[col])
+    if method in ("remove", "drop"):
+        mask = MissingValueService.get_missing_mask(df[col], custom_markers=null_markers)
+        result_df = df[~mask].copy()
         affected = rows_before - len(result_df)
-        fill_description = f"Remove {affected} row(s) with missing '{col}'"
+        imputed_count = 0
+        remaining_missing = 0
         before_summary = f"Column '{col}': {missing_count} missing value(s) out of {rows_before} rows"
         after_summary = f"{affected} row(s) removed → {len(result_df)} rows remaining"
-
-    elif method in ("mean", "median", "mode"):
-        if method in ("mean", "median") and not pd.api.types.is_numeric_dtype(df[col]):
-            raise AppError(
-                code="INVALID_METHOD",
-                message=f"Cannot use '{method}' on non-numeric column '{col}' (dtype: {df[col].dtype})",
-                status_code=400,
-            )
-
-        if method == "mean":
-            fill_val = df[col].mean()
-        elif method == "median":
-            fill_val = df[col].median()
-        else:  # mode
-            mode_series = df[col].mode()
-            if len(mode_series) == 0:
-                raise AppError(
-                    code="NO_MODE",
-                    message=f"Cannot compute mode for column '{col}' — no non-null values.",
-                    status_code=400,
-                )
-            fill_val = mode_series.iloc[0]
-
-        safe_fill = _safe_value(fill_val)
-        result_df = df.copy()
-        result_df[col] = result_df[col].fillna(fill_val)
-        affected = missing_count
-
-        before_summary = f"Column '{col}': {missing_count} missing value(s) out of {rows_before} rows"
-        if method == "mean":
-            after_summary = f"Mean = {safe_fill}, {affected} cell(s) would be filled"
-        elif method == "median":
-            after_summary = f"Median = {safe_fill}, {affected} cell(s) would be filled"
-        else:
-            after_summary = f"Mode = {safe_fill}, {affected} cell(s) would be filled"
-        fill_description = f"Fill {affected} missing '{col}' with {method} ({safe_fill})"
-
-    elif method == "custom":
-        if body.value is None:
-            raise AppError(
-                code="MISSING_VALUE",
-                message="Custom fill method requires a 'value' parameter.",
-                status_code=400,
-            )
-        fill_val = body.value
-        # Try to cast to numeric if the column is numeric
-        if pd.api.types.is_numeric_dtype(df[col]):
-            try:
-                fill_val = float(fill_val)
-            except (ValueError, TypeError):
-                pass
-
-        result_df = df.copy()
-        result_df[col] = result_df[col].fillna(fill_val)
-        affected = missing_count
-
-        before_summary = f"Column '{col}': {missing_count} missing value(s) out of {rows_before} rows"
-        after_summary = f"Custom value = {fill_val}, {affected} cell(s) would be filled"
-        fill_description = f"Fill {affected} missing '{col}' with custom value ({fill_val})"
-
     else:
-        raise AppError(
-            code="INVALID_METHOD",
-            message=f"Unknown method '{method}'. Use: remove, mean, median, mode, custom",
-            status_code=400,
+        imputed_series, imputed_count, remaining_missing, fill_val = MissingValueService.safe_impute(
+            df[col],
+            col_name=col,
+            strategy=method,
+            value=body.value,
+            custom_markers=null_markers,
         )
+        result_df = df.copy()
+        result_df[col] = imputed_series
+        affected = imputed_count
+        safe_fill = _safe_value(fill_val)
+        before_summary = f"Column '{col}': {missing_count} missing value(s) out of {rows_before} rows"
+        if method == "mean":
+            after_summary = f"Mean = {safe_fill}, {affected} cell(s) {'would be' if preview else 'were'} filled, {remaining_missing} remaining"
+        elif method == "median":
+            after_summary = f"Median = {safe_fill}, {affected} cell(s) {'would be' if preview else 'were'} filled, {remaining_missing} remaining"
+        elif method == "mode":
+            after_summary = f"Mode = {safe_fill}, {affected} cell(s) {'would be' if preview else 'were'} filled, {remaining_missing} remaining"
+        elif method in ("custom", "constant"):
+            after_summary = f"Constant value = {safe_fill}, {affected} cell(s) {'would be' if preview else 'were'} filled, {remaining_missing} remaining"
+        else:
+            after_summary = f"Strategy '{method}', {affected} cell(s) {'would be' if preview else 'were'} filled, {remaining_missing} remaining"
 
     if preview:
         return CleanOperationResponse(
             affected_rows=affected,
+            original_missing_count=missing_count,
+            imputed_count=imputed_count,
+            remaining_missing_count=remaining_missing,
+            detected_dtype=detected_dtype,
+            chosen_strategy=method,
             before_summary=before_summary,
             after_summary=after_summary,
             operation_id=None,
@@ -424,7 +419,12 @@ async def clean_missing(
 
     record = OperationRecord(
         operation="clean_missing",
-        params={"column": col, "method": method, "value": _safe_value(body.value) if body.value is not None else None},
+        params={
+            "column": col,
+            "method": method,
+            "value": _safe_value(body.value) if body.value is not None else None,
+            "null_markers": null_markers,
+        },
         columns_affected=[col],
         affected_row_count=affected,
         rows_before=rows_before,
@@ -437,8 +437,13 @@ async def clean_missing(
 
     return CleanOperationResponse(
         affected_rows=affected,
+        original_missing_count=missing_count,
+        imputed_count=imputed_count,
+        remaining_missing_count=remaining_missing,
+        detected_dtype=detected_dtype,
+        chosen_strategy=method,
         before_summary=before_summary,
-        after_summary=after_summary.replace("would be", "were") if "would be" in after_summary else after_summary,
+        after_summary=after_summary,
         operation_id=f"op_{op_index}",
     )
 
@@ -453,10 +458,11 @@ async def clean_duplicates(
     body: CleanDuplicatesRequest = Body(default=None),
 ):
     """
-    Handle duplicate rows.
-
-    preview=true  → return duplicate count and sample duplicate rows
-    preview=false → remove duplicates (keep first), append to operation log
+    Handle duplicate rows with configurable options:
+    - columns: subset of columns to evaluate
+    - keep: 'first' or 'last' occurrence
+    - ignore_case: case-insensitive text comparison
+    - trim_whitespace: ignore leading/trailing whitespace in text comparison
     """
     session = session_store.get_session(dataset_id)
     if session is None:
@@ -469,12 +475,27 @@ async def clean_duplicates(
     df = session.df
     rows_before = len(df)
 
-    # Compute duplicates
-    try:
-        dup_mask = df.duplicated(keep="first")
-    except TypeError:
-        dup_mask = df.astype(str).duplicated(keep="first")
+    columns = body.columns if body and body.columns else None
+    keep = body.keep if body and body.keep in ("first", "last") else "first"
+    ignore_case = bool(body.ignore_case) if body else False
+    trim_whitespace = bool(body.trim_whitespace) if body else False
 
+    if columns:
+        invalid = [c for c in columns if c not in df.columns]
+        if invalid:
+            raise AppError(
+                code="INVALID_COLUMNS",
+                message=f"Column(s) not found in dataset: {', '.join(invalid)}",
+                status_code=400,
+            )
+
+    dup_mask = _detect_duplicate_mask(
+        df,
+        subset=columns,
+        keep=keep,
+        ignore_case=ignore_case,
+        trim_whitespace=trim_whitespace,
+    )
     dup_count = int(dup_mask.sum())
 
     if dup_count == 0:
@@ -489,9 +510,10 @@ async def clean_duplicates(
     dup_sample = df[dup_mask].head(20)
     sample_rows = sanitize_dataframe_records(dup_sample)
 
-    before_summary = f"{rows_before} rows, {dup_count} duplicate(s) found"
+    scope_desc = f"across {len(columns)} selected column(s)" if columns else "across all columns"
+    before_summary = f"{rows_before} rows, {dup_count} duplicate(s) found {scope_desc}"
     rows_after = rows_before - dup_count
-    after_summary = f"{dup_count} duplicate row(s) removed → {rows_after} rows remaining"
+    after_summary = f"{dup_count} duplicate row(s) removed (kept {keep}) → {rows_after} rows remaining"
 
     if preview:
         return CleanOperationResponse(
@@ -504,12 +526,17 @@ async def clean_duplicates(
 
     # Apply: remove duplicates
     snapshot = df.copy(deep=True)
-    result_df = df.drop_duplicates(keep="first").reset_index(drop=True)
+    result_df = df[~dup_mask].reset_index(drop=True)
 
     record = OperationRecord(
         operation="clean_duplicates",
-        params={},
-        columns_affected=list(df.columns),
+        params={
+            "columns": columns,
+            "keep": keep,
+            "ignore_case": ignore_case,
+            "trim_whitespace": trim_whitespace,
+        },
+        columns_affected=columns if columns else list(df.columns),
         affected_row_count=dup_count,
         rows_before=rows_before,
         rows_after=len(result_df),
@@ -1551,19 +1578,20 @@ async def export_dataset(
     dataset_id: str = Path(..., description="Unique dataset identifier"),
     format: str = Query("csv", description="File format: csv | xlsx"),
 ):
-    """Exports cleaned dataset as downloadable CSV or XLSX file."""
+    """Exports cleaned dataset as downloadable CSV or XLSX file with formula injection protection."""
     session = session_store.get_session(dataset_id)
     if session is None:
         raise AppError(code="DATASET_NOT_FOUND", message=f"Dataset '{dataset_id}' not found.", status_code=404)
 
     df = session.df
+    export_df = sanitize_for_spreadsheet(df)
     base_name = session.metadata.get("filename", f"dataset_{dataset_id}").rsplit(".", 1)[0]
     safe_name = "".join(c for c in base_name if c.isalnum() or c in ("-", "_")).strip() or "dataset"
 
     if format.lower() == "xlsx":
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Cleaned Data")
+            export_df.to_excel(writer, index=False, sheet_name="Cleaned Data")
         buffer.seek(0)
         filename = f"{safe_name}_cleaned.xlsx"
         return Response(
@@ -1572,12 +1600,12 @@ async def export_dataset(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     else:
-        # Default CSV
-        csv_str = df.to_csv(index=False)
+        # Default CSV with UTF-8 BOM (utf-8-sig) to preserve Unicode/international text in Excel
+        csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
         filename = f"{safe_name}_cleaned.csv"
         return Response(
-            content=csv_str.encode("utf-8"),
-            media_type="text/csv",
+            content=csv_bytes,
+            media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 

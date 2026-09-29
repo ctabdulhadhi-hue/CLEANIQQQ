@@ -74,27 +74,31 @@ class TypeDetectorService:
                         "sample_to": sample_conv,
                     }
 
-                # Test 2b: Integer
+                # Test 2b: Integer (do not convert if values have leading zeros like ZIP codes or IDs)
                 if not suggestion:
                     clean_int_pattern = re.compile(r"^-?\d+$")
-                    int_matches = str_vals.apply(lambda x: bool(clean_int_pattern.match(x))).sum()
-                    if int_matches / total_non_null >= 0.85:
-                        confidence = round(int_matches / total_non_null, 2)
-                        sample_orig = str_vals.head(3).tolist()
-                        sample_conv = [int(x) if clean_int_pattern.match(x) else None for x in sample_orig]
-                        suggestion = {
-                            "column": col,
-                            "current_type": current_dtype,
-                            "suggested_type": "integer",
-                            "confidence": confidence,
-                            "reason": f"{int(confidence * 100)}% of text values contain only numeric digits",
-                            "sample_from": sample_orig,
-                            "sample_to": sample_conv,
-                        }
+                    has_leading_zeros = str_vals.apply(lambda x: len(x) > 1 and x.startswith("0") and bool(clean_int_pattern.match(x))).any()
+                    if not has_leading_zeros:
+                        int_matches = str_vals.apply(lambda x: bool(clean_int_pattern.match(x))).sum()
+                        if int_matches / total_non_null >= 0.85:
+                            confidence = round(int_matches / total_non_null, 2)
+                            sample_orig = str_vals.head(3).tolist()
+                            sample_conv = [int(x) if clean_int_pattern.match(x) else None for x in sample_orig]
+                            suggestion = {
+                                "column": col,
+                                "current_type": current_dtype,
+                                "suggested_type": "integer",
+                                "confidence": confidence,
+                                "reason": f"{int(confidence * 100)}% of text values contain only numeric digits",
+                                "sample_from": sample_orig,
+                                "sample_to": sample_conv,
+                            }
 
-                # Test 2c: Float (e.g. "12.34" or "1,234.56")
-                if not suggestion:
-                    cleaned_nums = str_vals.str.replace(",", "", regex=False)
+                # Test 2c: Float (e.g. "12.34", "1,234.56", or "$1,200.50")
+                if not suggestion and not has_leading_zeros:
+                    cleaned_nums = str_vals.str.replace(r"^[\$€£₹¥]\s*", "", regex=True)
+                    cleaned_nums = cleaned_nums.str.replace(",", "", regex=False)
+                    cleaned_nums = cleaned_nums.str.replace(r"%\s*$", "", regex=True)
                     try:
                         parsed_floats = pd.to_numeric(cleaned_nums, errors="coerce")
                         valid_float_count = parsed_floats.notna().sum()
@@ -148,6 +152,19 @@ class TypeDetectorService:
         return suggestions
 
     @classmethod
+    def _clean_numeric_series(cls, s: pd.Series) -> pd.Series:
+        """Cleans currency symbols, accounting parentheses, commas, and percentage signs."""
+        str_s = s.astype(str).str.strip()
+        # Accounting format: (123.45) -> -123.45
+        acct_mask = str_s.str.startswith("(") & str_s.str.endswith(")")
+        str_s = str_s.where(~acct_mask, "-" + str_s.str.slice(1, -1))
+        # Strip currency symbols, commas, and percentage signs
+        str_s = str_s.str.replace(r"^[\$€£₹¥]\s*", "", regex=True)
+        str_s = str_s.str.replace(",", "", regex=False)
+        str_s = str_s.str.replace(r"%\s*$", "", regex=True)
+        return str_s
+
+    @classmethod
     def convert_type(
         cls,
         series: pd.Series,
@@ -165,7 +182,7 @@ class TypeDetectorService:
 
         if target_type == "integer":
             if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
-                s = s.astype(str).str.replace(",", "", regex=False)
+                s = cls._clean_numeric_series(s)
             numeric_s = pd.to_numeric(s, errors="coerce")
             # Nullable integer type
             converted = numeric_s.round().astype("Int64")
@@ -177,7 +194,7 @@ class TypeDetectorService:
 
         elif target_type == "float":
             if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
-                s = s.astype(str).str.replace(",", "", regex=False)
+                s = cls._clean_numeric_series(s)
             converted = pd.to_numeric(s, errors="coerce")
             new_nulls = int(converted.isna().sum() - original.isna().sum())
             affected = int((original.astype(str) != converted.astype(str)).sum())
