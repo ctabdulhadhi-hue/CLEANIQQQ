@@ -461,20 +461,39 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
-export async function checkBackendHealth(timeoutMs: number = 60000): Promise<HealthResponse> {
+export async function checkBackendHealth(
+  timeoutMs: number = 60000,
+  externalSignal?: AbortSignal,
+): Promise<HealthResponse> {
   const isLocalHost =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
   const ping = async (baseUrl: string, durationMs: number = timeoutMs): Promise<HealthResponse> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), durationMs);
+    // Internal timeout controller
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), durationMs);
+
+    // If caller provided an external signal, abort on either signal
+    const onExternalAbort = () => timeoutController.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        clearTimeout(timer);
+        const abortErr = new Error('Health check aborted') as AppApiError;
+        abortErr.code = 'ABORTED';
+        abortErr.isNetwork = true;
+        throw abortErr;
+      }
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
     try {
       const target = baseUrl ? `${baseUrl}/health` : '/health';
       const res = await fetch(target, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-        signal: controller.signal,
+        cache: 'no-store',
+        signal: timeoutController.signal,
       });
 
       if (!res.ok) {
@@ -499,6 +518,13 @@ export async function checkBackendHealth(timeoutMs: number = 60000): Promise<Hea
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {
+        // Distinguish: was it the external signal or our internal timeout?
+        if (externalSignal?.aborted) {
+          const abortErr = new Error('Health check aborted') as AppApiError;
+          abortErr.code = 'ABORTED';
+          abortErr.isNetwork = true;
+          throw abortErr;
+        }
         const timeoutErr = new Error('Backend health check timed out') as AppApiError;
         timeoutErr.code = 'TIMEOUT_ERROR';
         timeoutErr.isTimeout = true;
@@ -511,6 +537,9 @@ export async function checkBackendHealth(timeoutMs: number = 60000): Promise<Hea
       throw err;
     } finally {
       clearTimeout(timer);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
     }
   };
 
@@ -519,7 +548,7 @@ export async function checkBackendHealth(timeoutMs: number = 60000): Promise<Hea
     // 1. Try local dev server proxy / local backend first with a fast 1.5s timeout
     try {
       const localRes = await ping('', 1500);
-      if (localRes && (localRes.status === 'ok' || !localRes.status)) {
+      if (localRes && localRes.status === 'ok') {
         setApiBaseUrl('');
         return localRes;
       }
@@ -531,7 +560,7 @@ export async function checkBackendHealth(timeoutMs: number = 60000): Promise<Hea
     const prodTarget = import.meta.env.VITE_API_URL || 'https://cleaniqqq.onrender.com';
     try {
       const prodRes = await ping(prodTarget, timeoutMs);
-      if (prodRes && (prodRes.status === 'ok' || !prodRes.status)) {
+      if (prodRes && prodRes.status === 'ok') {
         setApiBaseUrl(prodTarget);
         return prodRes;
       }

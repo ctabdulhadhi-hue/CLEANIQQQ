@@ -5,7 +5,7 @@ interface NavbarProps {
   backendConnected: boolean | null;
   activeSessions?: number;
   wakingUp?: boolean;
-  status?: 'checking' | 'online' | 'offline' | 'ready' | 'failed' | 'waking';
+  status?: 'checking' | 'waking' | 'online' | 'offline' | 'ready' | 'failed';
   statusMessage?: string;
   onCheckStatus?: () => void;
 }
@@ -27,9 +27,11 @@ export function Navbar({
     }
   }
 
-  const effectiveStatus: 'checking' | 'online' | 'offline' =
+  const effectiveStatus: 'checking' | 'waking' | 'online' | 'offline' =
     status === 'online' || status === 'ready' || backendConnected === true
       ? 'online'
+      : status === 'waking'
+      ? 'waking'
       : status === 'offline' || status === 'failed' || backendConnected === false
       ? 'offline'
       : 'checking';
@@ -39,6 +41,8 @@ export function Navbar({
     switch (effectiveStatus) {
       case 'online':
         return 'bg-emerald-400 status-dot-pulse';
+      case 'waking':
+        return 'bg-amber-400 animate-pulse';
       case 'checking':
         return 'bg-amber-400 animate-pulse';
       case 'offline':
@@ -50,6 +54,8 @@ export function Navbar({
     switch (effectiveStatus) {
       case 'online':
         return 'Backend Online';
+      case 'waking':
+        return 'Waking up server...';
       case 'checking':
         return 'Checking backend...';
       case 'offline':

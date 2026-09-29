@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { checkBackendHealth, type HealthResponse } from '../services/api';
 
-export type BackendStatus = 'checking' | 'online' | 'offline';
+export type BackendStatus = 'checking' | 'waking' | 'online' | 'offline';
 
 export interface UseBackendStatusReturn {
   status: BackendStatus;
@@ -11,21 +11,27 @@ export interface UseBackendStatusReturn {
   checkStatus: () => Promise<boolean>;
   retryConnection: () => Promise<boolean>;
   isChecking: boolean;
+  isWaking: boolean;
   isOnline: boolean;
   isOffline: boolean;
   // Aliases for seamless backward compatibility
   isReady: boolean;
-  isWaking: boolean;
   isFailed: boolean;
 }
 
-// Module-level singleton state across all hook consumers
+// ─── Module-level singleton state shared across all hook consumers ───────────
+
 let sharedStatus: BackendStatus = 'checking';
 let sharedMessage: string = 'Checking backend...';
 let sharedActiveSessions: number = 0;
 let sharedVersion: string | null = null;
 let hasCheckedOnce = false;
 let activeCheckPromise: Promise<boolean> | null = null;
+
+// Timers and abort controllers that must be cleaned up
+let retryTimerId: ReturnType<typeof setTimeout> | null = null;
+let activeAbortController: AbortController | null = null;
+
 const listeners = new Set<() => void>();
 
 function notifyListeners() {
@@ -38,52 +44,123 @@ function notifyListeners() {
   });
 }
 
-async function runHealthCheck(): Promise<boolean> {
+function setSharedState(status: BackendStatus, message: string, sessions?: number, version?: string | null) {
+  sharedStatus = status;
+  sharedMessage = message;
+  if (sessions !== undefined) sharedActiveSessions = sessions;
+  if (version !== undefined) sharedVersion = version;
+  notifyListeners();
+}
+
+function cancelPendingWork() {
+  // Cancel any pending retry timer
+  if (retryTimerId !== null) {
+    clearTimeout(retryTimerId);
+    retryTimerId = null;
+  }
+  // Abort any in-flight fetch
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+}
+
+// ─── Single health check attempt (non-retrying) ─────────────────────────────
+
+async function singleHealthCheck(timeoutMs: number): Promise<HealthResponse> {
+  // Create a fresh AbortController for this attempt
+  activeAbortController = new AbortController();
+  return checkBackendHealth(timeoutMs, activeAbortController.signal);
+}
+
+// ─── Retry schedule: initial 60s, then 5s delay + 15s, then 10s delay + 15s ─
+
+const RETRY_SCHEDULE = [
+  { initialTimeoutMs: 60_000, label: 'Checking backend...',                        phase: 'checking' as const },
+  { delayMs: 5_000, timeoutMs: 15_000, label: 'Waking up CleanIQ server...',       phase: 'waking' as const },
+  { delayMs: 10_000, timeoutMs: 15_000, label: 'Waking up CleanIQ server...',      phase: 'waking' as const },
+];
+
+// ─── Full health check sequence with bounded retries ─────────────────────────
+
+async function runHealthCheckSequence(): Promise<boolean> {
   if (activeCheckPromise) {
     return activeCheckPromise;
   }
 
   activeCheckPromise = (async () => {
-    try {
-      const res: HealthResponse = await checkBackendHealth(60000);
-      if (res && res.status === 'ok') {
-        sharedStatus = 'online';
-        sharedMessage = 'Backend Online';
-        sharedActiveSessions = res.active_sessions || 0;
-        sharedVersion = res.version || null;
-        notifyListeners();
-        return true;
+    cancelPendingWork();
+
+    for (let i = 0; i < RETRY_SCHEDULE.length; i++) {
+      const step = RETRY_SCHEDULE[i];
+
+      // Set the UI state for this phase
+      if (i === 0) {
+        setSharedState(step.phase, step.label);
+      } else {
+        // Wait before retrying
+        setSharedState(step.phase, step.label);
+        const delay = 'delayMs' in step ? step.delayMs! : 0;
+        if (delay > 0) {
+          await new Promise<void>((resolve) => {
+            retryTimerId = setTimeout(() => {
+              retryTimerId = null;
+              resolve();
+            }, delay);
+          });
+        }
       }
-      throw new Error(`Unexpected health payload: ${JSON.stringify(res)}`);
-    } catch (err: any) {
-      const failureMode = err?.isTimeout
-        ? 'Timeout (exceeded 60s)'
-        : err?.status
-        ? `Non-200 response (HTTP ${err.status})`
-        : `Network error (${err?.message || 'Failed to fetch'})`;
 
-      console.error(`[CleanIQ Diagnostic] Health check failed. Failure mode: ${failureMode}`, err);
+      const timeout = 'initialTimeoutMs' in step ? step.initialTimeoutMs! : ('timeoutMs' in step ? step.timeoutMs! : 15_000);
 
-      sharedStatus = 'offline';
-      sharedMessage = "Backend Unavailable — CleanIQ's processing server is temporarily unavailable";
-      notifyListeners();
-      return false;
+      try {
+        const res = await singleHealthCheck(timeout);
+        if (res && res.status === 'ok') {
+          setSharedState('online', 'Backend Online', res.active_sessions || 0, res.version || null);
+          return true;
+        }
+        // Unexpected payload — continue to next retry
+        console.warn(`[CleanIQ] Health check returned unexpected payload:`, res);
+      } catch (err: any) {
+        const failureMode = err?.isTimeout
+          ? `Timeout (${Math.round(timeout / 1000)}s)`
+          : err?.status
+          ? `HTTP ${err.status}`
+          : `Network error (${err?.message || 'Failed to fetch'})`;
+
+        console.warn(`[CleanIQ] Health check attempt ${i + 1}/${RETRY_SCHEDULE.length} failed: ${failureMode}`);
+
+        // If this wasn't the last attempt, the loop continues
+        // If it was the last attempt, we fall through to the offline state below
+      }
     }
+
+    // All retries exhausted
+    setSharedState(
+      'offline',
+      "Backend Unavailable — CleanIQ's processing server didn't respond after multiple attempts",
+    );
+    return false;
   })().finally(() => {
     hasCheckedOnce = true;
     activeCheckPromise = null;
+    activeAbortController = null;
   });
 
   return activeCheckPromise;
 }
 
+// ─── Public trigger (used for initial check and Retry Connection button) ─────
+
 export function triggerHealthCheck(): Promise<boolean> {
+  // Cancel any existing sequence before starting a new one
+  cancelPendingWork();
   activeCheckPromise = null;
-  sharedStatus = 'checking';
-  sharedMessage = 'Checking backend...';
-  notifyListeners();
-  return runHealthCheck();
+  setSharedState('checking', 'Checking backend...');
+  return runHealthCheckSequence();
 }
+
+// ─── React Hook ──────────────────────────────────────────────────────────────
 
 export function useBackendStatus(): UseBackendStatusReturn {
   const [status, setStatus] = useState<BackendStatus>(sharedStatus);
@@ -92,7 +169,7 @@ export function useBackendStatus(): UseBackendStatusReturn {
   const [message, setMessage] = useState<string>(sharedMessage);
 
   useEffect(() => {
-    // On app mount, perform the single health check if not yet checked
+    // On app mount, perform the health check sequence if not yet checked
     if (!hasCheckedOnce && !activeCheckPromise) {
       triggerHealthCheck();
     }
@@ -103,6 +180,9 @@ export function useBackendStatus(): UseBackendStatusReturn {
       setVersion(sharedVersion);
       setMessage(sharedMessage);
     };
+
+    // Sync immediately in case state changed between render and effect
+    handleUpdate();
 
     listeners.add(handleUpdate);
 
@@ -118,6 +198,7 @@ export function useBackendStatus(): UseBackendStatusReturn {
   const isOnline = status === 'online';
   const isOffline = status === 'offline';
   const isChecking = status === 'checking';
+  const isWaking = status === 'waking';
 
   return {
     status,
@@ -127,10 +208,10 @@ export function useBackendStatus(): UseBackendStatusReturn {
     checkStatus,
     retryConnection: checkStatus,
     isChecking,
+    isWaking,
     isOnline,
     isOffline,
     isReady: isOnline,
-    isWaking: false,
     isFailed: isOffline,
   };
 }

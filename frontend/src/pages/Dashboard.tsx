@@ -127,6 +127,14 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Backend Waking Up Banner */}
+      {backend.isWaking && (
+        <div className="p-3.5 rounded-xl border bg-amber-500/5 border-amber-500/20 text-amber-300 text-xs flex items-center gap-2.5">
+          <div className="w-4 h-4 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin shrink-0" />
+          <span>Waking up CleanIQ server — free-tier cold start, please wait...</span>
+        </div>
+      )}
+
       {/* Hero Welcome Card */}
       <div className="relative overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-white/[0.03] p-8 sm:p-10">
         <div className="relative z-10 max-w-2xl space-y-4">
@@ -157,13 +165,15 @@ export function Dashboard() {
                 title={
                   backend.isOffline
                     ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
-                    : "Checking backend..."
+                    : backend.isWaking
+                    ? 'Waking up CleanIQ server — please wait...'
+                    : 'Checking backend...'
                 }
               >
                 <UploadCloud className="w-4 h-4" />
                 <span>Upload Dataset</span>
                 <span className="text-[10px] font-normal opacity-80">
-                  ({backend.isOffline ? 'Offline' : 'Checking...'})
+                  ({backend.isOffline ? 'Offline' : backend.isWaking ? 'Waking...' : 'Checking...'})
                 </span>
               </div>
             )}
@@ -438,6 +448,10 @@ export function Dashboard() {
         <div className="text-xs text-[#8a8a86] flex items-center gap-2">
           {backend.isChecking ? (
             <span>Checking backend...</span>
+          ) : backend.isWaking ? (
+            <span className="flex items-center gap-1 text-amber-300 font-medium">
+              <div className="w-3.5 h-3.5 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" /> Waking up server...
+            </span>
           ) : backend.isOnline ? (
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <CheckCircle2 className="w-3.5 h-3.5" /> Backend Online

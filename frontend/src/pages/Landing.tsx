@@ -227,6 +227,8 @@ export function Landing() {
                   ? 'Backend Online'
                   : backend.isOffline
                   ? 'Backend Unavailable'
+                  : backend.isWaking
+                  ? 'Waking up server...'
                   : 'Checking backend...'}
               </span>
               {backend.isOffline && (
@@ -498,16 +500,18 @@ export function Landing() {
               onClick={handleTrySample}
               disabled={loadingSample || !backend.isOnline}
               title={
-                !backend.isOnline
-                  ? backend.isOffline
-                    ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
-                    : 'Checking backend...'
-                  : 'Load demo sales dataset'
+                backend.isOnline
+                  ? 'Load demo sales dataset'
+                  : backend.isOffline
+                  ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
+                  : backend.isWaking
+                  ? 'Waking up CleanIQ server — please wait...'
+                  : 'Checking backend...'
               }
               className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 border font-medium px-7 py-3.5 rounded-xl transition-all text-sm active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d] ${
-                !backend.isOnline
-                  ? 'border-[rgba(255,255,255,0.08)] bg-white/[0.02] text-[#8a8a86] cursor-not-allowed opacity-60'
-                  : 'border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-slate-200 cursor-pointer'
+                backend.isOnline
+                  ? 'border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-slate-200 cursor-pointer'
+                  : 'border-[rgba(255,255,255,0.08)] bg-white/[0.02] text-[#8a8a86] cursor-not-allowed opacity-60'
               }`}
             >
               {loadingSample ? (
@@ -520,7 +524,7 @@ export function Landing() {
                   <span>Try with sample data</span>
                   {!backend.isOnline && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-[#8a8a86]">
-                      {backend.isOffline ? 'Offline' : 'Checking...'}
+                      {backend.isOffline ? 'Offline' : backend.isWaking ? 'Waking...' : 'Checking...'}
                     </span>
                   )}
                 </>
@@ -528,7 +532,7 @@ export function Landing() {
             </button>
           </div>
 
-          {/* Backend offline/checking status banner (Min-height reserved to prevent layout shift) */}
+          {/* Backend offline/waking/checking status banner (Min-height reserved to prevent layout shift) */}
           <div className="min-h-[48px] mt-6 flex items-center justify-center">
             {backend.isOffline ? (
               <div
@@ -545,6 +549,11 @@ export function Landing() {
                 >
                   Retry Connection
                 </button>
+              </div>
+            ) : backend.isWaking ? (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium bg-amber-500/5 border border-amber-500/20 text-amber-300">
+                <div className="w-4 h-4 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                <span>Waking up CleanIQ server — free-tier cold start, please wait...</span>
               </div>
             ) : backend.isChecking ? (
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.03] border border-white/[0.08] text-[#8a8a86]">

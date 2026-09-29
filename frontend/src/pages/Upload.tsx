@@ -181,6 +181,14 @@ export function Upload() {
         </div>
       )}
 
+      {/* Backend Waking Up Indicator */}
+      {backend.isWaking && (
+        <div className="p-3.5 rounded-[14px] bg-amber-500/5 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2.5">
+          <Loader2 className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+          <span>Waking up CleanIQ server — free-tier cold start, please wait...</span>
+        </div>
+      )}
+
       {/* Error Banner */}
       {error && (
         <div className="p-4 rounded-[14px] bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-start justify-between gap-3 shadow-lg">
@@ -264,17 +272,19 @@ export function Upload() {
               type="button"
               disabled={uploading || !backend.isOnline}
               title={
-                !backend.isOnline
-                  ? backend.isOffline
-                    ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
-                    : 'Checking backend...'
-                  : 'Choose file to upload'
+                backend.isOnline
+                  ? 'Choose file to upload'
+                  : backend.isOffline
+                  ? "Backend Unavailable — CleanIQ's processing server is temporarily unavailable"
+                  : backend.isWaking
+                  ? 'Waking up CleanIQ server — please wait...'
+                  : 'Checking backend...'
               }
               className={`btn-primary inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold ${
                 !backend.isOnline ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
-              <span>{backend.isOnline ? 'Choose File from Computer' : backend.isOffline ? 'Backend Unavailable' : 'Checking Backend...'}</span>
+              <span>{backend.isOnline ? 'Choose File from Computer' : backend.isOffline ? 'Backend Unavailable' : backend.isWaking ? 'Waking Up Server...' : 'Checking Backend...'}</span>
               <ArrowRight className="w-4 h-4 ml-0.5" />
             </button>
           </div>
