@@ -256,7 +256,7 @@ export function Landing() {
                 <LinkedinIcon className="w-4 h-4" />
               </a>
               <a
-                href="https://github.com/ctabdulhadhi"
+                href="https://github.com/ctabdulhadhi-hue/CLEANIQQQ"
                 target="_blank"
                 rel="noopener noreferrer"
                 id="navbar-github-link"
@@ -390,7 +390,7 @@ export function Landing() {
               <LinkedinIcon className="w-5 h-5" />
             </a>
             <a
-              href="https://github.com/ctabdulhadhi"
+              href="https://github.com/ctabdulhadhi-hue/CLEANIQQQ"
               target="_blank"
               rel="noopener noreferrer"
               className="p-2.5 rounded-full bg-white/5 border border-white/10 text-[#93938e] hover:text-white hover:bg-white/10 transition-colors flex items-center justify-center active:scale-[0.98]"

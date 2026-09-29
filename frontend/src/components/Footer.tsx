@@ -60,7 +60,7 @@ export const Footer = () => {
               <LinkedinIcon className="w-4 h-4" />
             </a>
             <a
-              href="https://github.com/ctabdulhadhi"
+              href="https://github.com/ctabdulhadhi-hue/CLEANIQQQ"
               target="_blank"
               rel="noopener noreferrer"
               className="p-2 rounded-lg text-[#93938e] hover:text-white hover:bg-white/5 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d]"
