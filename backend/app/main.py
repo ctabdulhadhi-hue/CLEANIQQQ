@@ -99,3 +99,10 @@ if os.path.exists(FRONTEND_DIST):
             return FileResponse(index_file)
         return {"error": "Frontend build file index.html not found."}
 
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port)
+
+

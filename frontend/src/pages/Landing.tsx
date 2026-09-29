@@ -233,8 +233,9 @@ export function Landing() {
                 <button
                   onClick={backend.checkStatus}
                   className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30 font-semibold active:scale-[0.98] transition-all"
+                  title="Retry Connection"
                 >
-                  Check status
+                  Retry Connection
                 </button>
               )}
             </div>
@@ -326,8 +327,9 @@ export function Landing() {
             <button
               onClick={backend.checkStatus}
               className="text-[11px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold"
+              title="Retry Connection"
             >
-              Check status
+              Retry Connection
             </button>
           )}
         </div>

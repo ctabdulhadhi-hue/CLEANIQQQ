@@ -62,7 +62,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+import logging
+
+logger = logging.getLogger("cleaniq.errors")
+
+
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(f"Unhandled exception at {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": {"code": "INTERNAL_SERVER_ERROR", "message": str(exc) or "An unexpected server error occurred"}},
