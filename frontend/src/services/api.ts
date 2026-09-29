@@ -466,9 +466,9 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-  const ping = async (baseUrl: string): Promise<HealthResponse> => {
+  const ping = async (baseUrl: string, durationMs: number = timeoutMs): Promise<HealthResponse> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), durationMs);
     try {
       const target = baseUrl ? `${baseUrl}/health` : '/health';
       const res = await fetch(target, {
@@ -519,22 +519,22 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
 
   // If running locally in browser
   if (isLocalHost) {
-    // 1. Try local dev server proxy / local backend first
+    // 1. Try local dev server proxy / local backend first with a fast 1.5s timeout
     try {
-      const localRes = await ping('');
-      if (localRes && localRes.status === 'ok') {
+      const localRes = await ping('', 1500);
+      if (localRes && (localRes.status === 'ok' || !localRes.status)) {
         setApiBaseUrl('');
         return localRes;
       }
     } catch {
-      // Local backend on port 8000 not running, gracefully fallback to live Render backend
+      // Local backend on port 8000 not running, immediately fallback to live Render backend
     }
 
     // 2. Fallback to production cloud backend so local frontend remains 100% usable
     const prodTarget = import.meta.env.VITE_API_URL || 'https://cleaniqqq.onrender.com';
     try {
-      const prodRes = await ping(prodTarget);
-      if (prodRes && prodRes.status === 'ok') {
+      const prodRes = await ping(prodTarget, timeoutMs);
+      if (prodRes && (prodRes.status === 'ok' || !prodRes.status)) {
         setApiBaseUrl(prodTarget);
         return prodRes;
       }
@@ -544,7 +544,7 @@ export async function checkBackendHealth(timeoutMs: number = 15000): Promise<Hea
   }
 
   // Production or non-localhost: ping configured API_BASE directly
-  return await ping(API_BASE);
+  return await ping(API_BASE, timeoutMs);
 }
 
 // ─── Upload ──────────────────────────────────────────────────────────────────
