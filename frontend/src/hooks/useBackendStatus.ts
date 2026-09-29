@@ -44,31 +44,48 @@ async function runHealthCheck(): Promise<boolean> {
   }
 
   activeCheckPromise = (async () => {
-    try {
-      const res: HealthResponse = await checkBackendHealth(5000);
-      if (res && res.status === 'ok') {
-        sharedStatus = 'online';
-        sharedMessage = 'Backend Online';
-        sharedActiveSessions = res.active_sessions || 0;
-        sharedVersion = res.version || null;
-        notifyListeners();
-        return true;
-      } else {
-        sharedStatus = 'offline';
-        sharedMessage = "Backend Unavailable — CleanIQ's processing server is temporarily unavailable";
-        notifyListeners();
-        return false;
+    let lastError: any = null;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res: HealthResponse = await checkBackendHealth(15000);
+        if (res && res.status === 'ok') {
+          sharedStatus = 'online';
+          sharedMessage = 'Backend Online';
+          sharedActiveSessions = res.active_sessions || 0;
+          sharedVersion = res.version || null;
+          notifyListeners();
+          return true;
+        } else {
+          lastError = new Error(`Unexpected health payload: ${JSON.stringify(res)}`);
+        }
+      } catch (err: any) {
+        lastError = err;
       }
-    } catch {
-      sharedStatus = 'offline';
-      sharedMessage = "Backend Unavailable — CleanIQ's processing server is temporarily unavailable";
-      notifyListeners();
-      return false;
-    } finally {
-      hasCheckedOnce = true;
-      activeCheckPromise = null;
+
+      // If the first attempt failed, wait 3 seconds and retry ONCE automatically
+      if (attempt === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
     }
-  })();
+
+    // Diagnostic console.error (dev-visible only, not shown to users)
+    const failureMode = lastError?.isTimeout
+      ? 'Timeout (exceeded 15s)'
+      : lastError?.status
+      ? `Non-200 response (HTTP ${lastError.status})`
+      : `Network error (${lastError?.message || 'Failed to fetch'})`;
+
+    console.error(`[CleanIQ Diagnostic] Health check failed after retry. Failure mode: ${failureMode}`, lastError);
+
+    sharedStatus = 'offline';
+    sharedMessage = "Backend Unavailable — CleanIQ's processing server is temporarily unavailable";
+    notifyListeners();
+    return false;
+  })().finally(() => {
+    hasCheckedOnce = true;
+    activeCheckPromise = null;
+  });
 
   return activeCheckPromise;
 }

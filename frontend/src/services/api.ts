@@ -439,7 +439,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
-export async function checkBackendHealth(timeoutMs: number = 5000): Promise<HealthResponse> {
+export async function checkBackendHealth(timeoutMs: number = 15000): Promise<HealthResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
