@@ -391,11 +391,23 @@ export interface CorrelationResponse {
 }
 
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+export const API_URL = (() => {
+  // In browser on localhost / 127.0.0.1, route via local Vite dev proxy (/api & /health -> 127.0.0.1:8000)
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return '';
+    }
+  }
 
-export const API_URL = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/+$/, '')
-  : '';
+  // Production environment configuration
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+
+  return 'https://cleaniqqq.onrender.com';
+})();
 const API_BASE = API_URL;
 const RECENT_DATASETS_KEY = 'cleaniq_recent_datasets';
 

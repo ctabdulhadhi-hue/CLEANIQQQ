@@ -91,6 +91,7 @@ async function runHealthCheck(): Promise<boolean> {
 }
 
 export function triggerHealthCheck(): Promise<boolean> {
+  activeCheckPromise = null;
   sharedStatus = 'checking';
   sharedMessage = 'Checking backend...';
   notifyListeners();

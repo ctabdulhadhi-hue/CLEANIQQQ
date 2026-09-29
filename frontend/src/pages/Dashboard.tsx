@@ -33,12 +33,6 @@ export function Dashboard() {
   const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
 
-  useEffect(() => {
-    // If status is still checking/unknown on direct navigation, trigger check
-    if (backend.isChecking) {
-      backend.checkStatus();
-    }
-  }, [backend.isChecking, backend.checkStatus]);
 
   useEffect(() => {
     let isMounted = true;
