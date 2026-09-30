@@ -34,8 +34,8 @@ export function History() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryId = searchParams.get('id');
 
-  const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
-  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(queryId);
+  const [recentDatasets] = useState<RecentDataset[]>(() => getRecentDatasets());
+  const activeDatasetId = queryId || (recentDatasets.length > 0 ? recentDatasets[0].dataset_id : null);
 
   const [entries, setEntries] = useState<OperationLogEntry[]>([]);
   const [canUndo, setCanUndo] = useState(true);
@@ -45,15 +45,12 @@ export function History() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Initialize recent datasets
+  // Sync default URL query if not present
   useEffect(() => {
-    const list = getRecentDatasets();
-    setRecentDatasets(list);
-    if (!queryId && list.length > 0) {
-      setActiveDatasetId(list[0].dataset_id);
-      setSearchParams({ id: list[0].dataset_id });
+    if (!queryId && recentDatasets.length > 0) {
+      setSearchParams({ id: recentDatasets[0].dataset_id }, { replace: true });
     }
-  }, []);
+  }, [queryId, recentDatasets, setSearchParams]);
 
   // Fetch operation log when dataset changes
   useEffect(() => {
@@ -85,7 +82,6 @@ export function History() {
   }, [activeDatasetId]);
 
   const handleSelectDataset = (id: string) => {
-    setActiveDatasetId(id);
     setSearchParams({ id });
   };
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import {
   Database,
@@ -41,21 +41,17 @@ export function Dataset() {
 
   const queryId = searchParams.get('id');
   const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>(() => getRecentDatasets());
-  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(() => {
-    if (queryId) return queryId;
-    const initialList = getRecentDatasets();
-    return initialList.length > 0 ? initialList[0].dataset_id : null;
-  });
+  const activeDatasetId = queryId || (recentDatasets.length > 0 ? recentDatasets[0].dataset_id : null);
 
   const [profile, setProfile] = useState<DatasetProfileResponse | null>(null);
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [resettingSample, setResettingSample] = useState(false);
 
-  const fetchDatasetData = async (datasetId: string) => {
-    setLoading(true);
-    setError(null);
+  // Derive loading state during render
+  const loading = Boolean(activeDatasetId && (!profile || profile.dataset_id !== activeDatasetId) && !error) || resettingSample;
+
+  const fetchDatasetData = useCallback(async (datasetId: string) => {
     try {
       const [resProfile, resQuality] = await Promise.all([
         getDatasetProfile(datasetId),
@@ -63,24 +59,21 @@ export function Dataset() {
       ]);
       setProfile(resProfile);
       setQualityData(resQuality);
-
       const totalMissing = resProfile.columns.reduce((sum, col) => sum + col.missing_count, 0);
       const totalIssues = totalMissing + resProfile.duplicate_row_count;
       updateRecentDatasetIssues(datasetId, totalIssues);
     } catch (err: any) {
       setError(err.message || 'Dataset not found or session has expired.');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
   const handleResetSample = async () => {
     try {
       setResettingSample(true);
+      setError(null);
       const res = await loadSampleDataset();
       const updatedList = getRecentDatasets();
       setRecentDatasets(updatedList);
-      setActiveDatasetId(res.dataset_id);
       setSearchParams({ id: res.dataset_id });
     } catch (err: any) {
       console.error('Failed to reset sample dataset:', err);
@@ -89,29 +82,23 @@ export function Dataset() {
     }
   };
 
-  // Sync activeDatasetId if queryId or recent list changes
+  // Sync default URL query if not present
   useEffect(() => {
-    if (queryId && queryId !== activeDatasetId) {
-      setActiveDatasetId(queryId);
-    } else if (!queryId && recentDatasets.length > 0 && !activeDatasetId) {
-      setActiveDatasetId(recentDatasets[0].dataset_id);
-      setSearchParams({ id: recentDatasets[0].dataset_id });
+    if (!queryId && recentDatasets.length > 0) {
+      setSearchParams({ id: recentDatasets[0].dataset_id }, { replace: true });
     }
-  }, [queryId, activeDatasetId, recentDatasets, setSearchParams]);
+  }, [queryId, recentDatasets, setSearchParams]);
 
   // Fetch dataset profile & quality when activeDatasetId changes
   useEffect(() => {
-    if (!activeDatasetId) {
-      setProfile(null);
-      setQualityData(null);
-      return;
-    }
-
-    fetchDatasetData(activeDatasetId);
-  }, [activeDatasetId]);
+    if (!activeDatasetId) return;
+    const timer = setTimeout(() => {
+      void fetchDatasetData(activeDatasetId);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeDatasetId, fetchDatasetData]);
 
   const handleSelectDataset = (id: string) => {
-    setActiveDatasetId(id);
     setSearchParams({ id });
   };
 

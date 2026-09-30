@@ -232,4 +232,18 @@ class TypeDetectorService:
                 status_code=400,
             )
 
+        errors = (errors_strategy or "coerce").lower().strip()
+        if new_nulls > 0:
+            if errors == "raise":
+                raise AppError(
+                    code="TYPE_CONVERSION_ERROR",
+                    message=(
+                        f"Cannot convert column to '{target_type}' with errors='raise': "
+                        f"{new_nulls} value(s) cannot be safely parsed as {target_type}."
+                    ),
+                    status_code=400,
+                )
+            elif errors == "ignore":
+                return original, 0, f"Conversion ignored: {new_nulls} value(s) could not be parsed as {target_type}"
+
         return converted, affected, summary

@@ -1,6 +1,19 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { Renderer, Program, Mesh, Triangle, Vec2 } from 'ogl';
 import './DarkVeil.css';
+
+function isWebGLAvailable() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
+    );
+  } catch {
+    return false;
+  }
+}
 
 const vertex = `
 attribute vec2 position;
@@ -96,38 +109,72 @@ export default function DarkVeil({
 }) {
   const ref = useRef(null);
 
+  const [webGlSupported, setWebGlSupported] = useState(() => isWebGLAvailable());
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  });
+
+  // Track prefers-reduced-motion changes
   useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handler = (e) => setPrefersReducedMotion(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!webGlSupported) return;
+
     const canvas = ref.current;
     if (!canvas) return;
     const parent = canvas.parentElement;
 
-    const renderer = new Renderer({
-      dpr: Math.min(window.devicePixelRatio, 2),
-      canvas
-    });
+    let renderer = null;
+    let gl = null;
+    let program = null;
+    let mesh = null;
 
-    const gl = renderer.gl;
-    const geometry = new Triangle(gl);
+    try {
+      renderer = new Renderer({
+        dpr: Math.min(window.devicePixelRatio || 1, 2),
+        canvas
+      });
 
-    const program = new Program(gl, {
-      vertex,
-      fragment,
-      uniforms: {
-        uTime: { value: 0 },
-        uResolution: { value: new Vec2() },
-        uHueShift: { value: hueShift },
-        uNoise: { value: noiseIntensity },
-        uScan: { value: scanlineIntensity },
-        uScanFreq: { value: scanlineFrequency },
-        uWarp: { value: warpAmount },
-        uLightMode: { value: lightMode ? 1 : 0 }
+      gl = renderer.gl;
+      if (!gl) {
+        throw new Error('WebGL context unavailable');
       }
-    });
 
-    const mesh = new Mesh(gl, { geometry, program });
+      const geometry = new Triangle(gl);
+
+      program = new Program(gl, {
+        vertex,
+        fragment,
+        uniforms: {
+          uTime: { value: 0 },
+          uResolution: { value: new Vec2() },
+          uHueShift: { value: hueShift },
+          uNoise: { value: noiseIntensity },
+          uScan: { value: scanlineIntensity },
+          uScanFreq: { value: scanlineFrequency },
+          uWarp: { value: warpAmount },
+          uLightMode: { value: lightMode ? 1 : 0 }
+        }
+      });
+
+      mesh = new Mesh(gl, { geometry, program });
+    } catch (err) {
+      console.warn('[CleanIQ] WebGL initialization failed, falling back to CSS background:', err);
+      queueMicrotask(() => setWebGlSupported(false));
+      return;
+    }
 
     const resize = () => {
-      if (!parent) return;
+      if (!parent || !renderer || !gl || !program) return;
       const w = parent.clientWidth;
       const h = parent.clientHeight;
       if (w === 0 || h === 0) return;
@@ -148,6 +195,7 @@ export default function DarkVeil({
 
     // ResizeObserver watching parent container for layout shifts
     let ro = null;
+    let observer = null;
     if (typeof ResizeObserver !== 'undefined' && parent) {
       ro = new ResizeObserver(() => {
         resize();
@@ -166,8 +214,20 @@ export default function DarkVeil({
     let frame = 0;
     let isVisible = true;
 
+    const renderSingleFrame = () => {
+      if (!program || !renderer || !mesh) return;
+      program.uniforms.uTime.value = 1.0;
+      program.uniforms.uHueShift.value = hueShift;
+      program.uniforms.uNoise.value = noiseIntensity;
+      program.uniforms.uScan.value = scanlineIntensity;
+      program.uniforms.uScanFreq.value = scanlineFrequency;
+      program.uniforms.uWarp.value = warpAmount;
+      program.uniforms.uLightMode.value = lightMode ? 1 : 0;
+      renderer.render({ scene: mesh });
+    };
+
     const loop = () => {
-      if (!isVisible) return;
+      if (!isVisible || !program || !renderer || !mesh) return;
       program.uniforms.uTime.value = ((performance.now() - start) / 1000) * speed;
       program.uniforms.uHueShift.value = hueShift;
       program.uniforms.uNoise.value = noiseIntensity;
@@ -179,43 +239,71 @@ export default function DarkVeil({
       frame = requestAnimationFrame(loop);
     };
 
-    // IntersectionObserver to pause loop when scrolled out of view
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          isVisible = entry.isIntersecting;
-          if (isVisible) {
-            if (!frame) {
-              frame = requestAnimationFrame(loop);
-            }
-          } else {
-            if (frame) {
-              cancelAnimationFrame(frame);
-              frame = 0;
-            }
-          }
-        });
-      },
-      { threshold: 0.05 }
-    );
-
-    if (parent) {
-      observer.observe(parent);
+    // Respect prefers-reduced-motion: render 1 static frame without continuous loop
+    if (prefersReducedMotion) {
+      renderSingleFrame();
     } else {
-      observer.observe(canvas);
+      // IntersectionObserver to pause loop when scrolled out of view
+      if (typeof IntersectionObserver !== 'undefined') {
+        observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              isVisible = entry.isIntersecting;
+              if (isVisible) {
+                if (!frame) {
+                  frame = requestAnimationFrame(loop);
+                }
+              } else {
+                if (frame) {
+                  cancelAnimationFrame(frame);
+                  frame = 0;
+                }
+              }
+            });
+          },
+          { threshold: 0.05 }
+        );
+
+        if (parent) {
+          observer.observe(parent);
+        } else {
+          observer.observe(canvas);
+        }
+      }
+
+      loop();
     }
 
-    loop();
-
     return () => {
+      if (observer) observer.disconnect();
       if (ro) ro.disconnect();
-      observer.disconnect();
-      cancelAnimationFrame(frame);
+      if (frame) cancelAnimationFrame(frame);
       cancelAnimationFrame(rafId);
       clearTimeout(timeoutId);
       window.removeEventListener('resize', resize);
+      if (gl) {
+        try {
+          gl.getExtension('WEBGL_lose_context')?.loseContext();
+        } catch {
+          // ignore cleanup errors
+        }
+      }
     };
-  }, [hueShift, noiseIntensity, scanlineIntensity, speed, scanlineFrequency, warpAmount, resolutionScale, lightMode]);
+  }, [hueShift, noiseIntensity, scanlineIntensity, speed, scanlineFrequency, warpAmount, resolutionScale, lightMode, webGlSupported, prefersReducedMotion]);
+
+  if (!webGlSupported) {
+    return (
+      <div
+        className="darkveil-canvas darkveil-fallback"
+        style={{
+          background: lightMode
+            ? 'radial-gradient(ellipse at 50% 0%, rgba(255, 106, 61, 0.08) 0%, rgba(248, 248, 250, 0.95) 75%)'
+            : 'radial-gradient(ellipse at 50% 0%, rgba(255, 106, 61, 0.14) 0%, rgba(12, 12, 14, 0.95) 75%)',
+        }}
+        aria-hidden="true"
+      />
+    );
+  }
 
   return <canvas ref={ref} className="darkveil-canvas" />;
 }

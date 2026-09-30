@@ -5,6 +5,7 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import asyncio
+from urllib.parse import unquote
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,10 +92,42 @@ if os.path.exists(FRONTEND_DIST):
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        target_file = os.path.join(FRONTEND_DIST, full_path)
-        if full_path and os.path.exists(target_file) and os.path.isfile(target_file):
-            return FileResponse(target_file)
         index_file = os.path.join(FRONTEND_DIST, "index.html")
+
+        if full_path:
+            # Check for null bytes
+            if "\x00" in full_path:
+                raise StarletteHTTPException(status_code=400, detail="Invalid path")
+
+            # Decode potential multi-encoded traversal sequences
+            decoded = unquote(unquote(full_path))
+            if "\x00" in decoded:
+                raise StarletteHTTPException(status_code=400, detail="Invalid path")
+
+            # Block path segments attempting dot-dot relative traversal
+            segments = [s.strip() for s in decoded.replace("\\", "/").split("/") if s.strip()]
+            if any(s == ".." or s.startswith("..") for s in segments):
+                raise StarletteHTTPException(status_code=404, detail="File not found")
+
+            # Strip drive letters (e.g. C:) and leading slashes to prevent absolute breakout
+            clean_rel = os.path.splitdrive(decoded)[1].lstrip("/\\")
+            target_file = os.path.abspath(os.path.join(FRONTEND_DIST, clean_rel))
+
+            # Strict path containment verification: target must reside within FRONTEND_DIST
+            try:
+                is_contained = os.path.commonpath([FRONTEND_DIST, target_file]) == FRONTEND_DIST
+            except (ValueError, TypeError):
+                is_contained = False
+
+            if not is_contained:
+                # Block traversal attempt outside the frontend distribution directory
+                raise StarletteHTTPException(status_code=404, detail="File not found")
+
+            # If target exists and is a regular file within FRONTEND_DIST, serve it
+            if os.path.exists(target_file) and os.path.isfile(target_file):
+                return FileResponse(target_file)
+
+        # SPA fallback: client-side routes (e.g. /dashboard, /upload) serve index.html
         if os.path.exists(index_file):
             return FileResponse(index_file)
         return {"error": "Frontend build file index.html not found."}

@@ -21,19 +21,31 @@ export const TiltCard: React.FC<TiltCardProps> = ({
   ...props
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
-  const [inView, setInView] = useState(!animateOnScroll);
+  const [reducedMotion, setReducedMotion] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  });
+
+  const [inView, setInView] = useState<boolean>(() => {
+    if (!animateOnScroll) return true;
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  });
+
   const [tilt, setTilt] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [spotlight, setSpotlight] = useState<{ x: number; y: number; opacity: number }>({
     x: 0,
     y: 0,
     opacity: 0,
   });
-  const [reducedMotion, setReducedMotion] = useState(false);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReducedMotion(mq.matches);
-
     const handleMotionChange = (e: MediaQueryListEvent) => {
       setReducedMotion(e.matches);
     };
@@ -43,10 +55,7 @@ export const TiltCard: React.FC<TiltCardProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!animateOnScroll || reducedMotion) {
-      setInView(true);
-      return;
-    }
+    if (inView) return;
 
     const el = cardRef.current;
     if (!el) return;
@@ -63,7 +72,7 @@ export const TiltCard: React.FC<TiltCardProps> = ({
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, [animateOnScroll, reducedMotion]);
+  }, [inView]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (reducedMotion || !cardRef.current) return;

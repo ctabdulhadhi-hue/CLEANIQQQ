@@ -93,19 +93,27 @@ export function Landing() {
     };
   }, [prefersReducedMotion]);
 
-  // Lock body scroll when full-screen mobile menu is open
+  // Lock body scroll and handle Escape key when full-screen mobile menu is open
   useEffect(() => {
-    if (isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
+    if (!isMobileMenuOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     return () => {
-      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = originalOverflow;
     };
   }, [isMobileMenuOpen]);
 
-  // Scroll-triggered reveal for Quality Score Card
+  // Scroll-triggered reveal for Quality Score Card with safe fallback timer
   const statCardRef = useRef<HTMLDivElement>(null);
   const [hasScrolledIntoView, setHasScrolledIntoView] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -120,21 +128,28 @@ export function Landing() {
     const card = statCardRef.current;
     if (!card) return;
 
+    // Fallback timer: ensure counters animate even if IntersectionObserver threshold is missed on mobile
+    const fallbackTimer = setTimeout(() => {
+      setHasScrolledIntoView(true);
+    }, 1200);
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             setHasScrolledIntoView(true);
+            clearTimeout(fallbackTimer);
             observer.disconnect();
           }
         });
       },
-      { threshold: 0.25 }
+      { threshold: 0.15 }
     );
 
     observer.observe(card);
 
     return () => {
+      clearTimeout(fallbackTimer);
       observer.disconnect();
     };
   }, [hasScrolledIntoView, prefersReducedMotion]);
@@ -200,7 +215,7 @@ export function Landing() {
               Roadmap
             </a>
             <a
-              href="https://github.com/ctabdulhadhi-hue/cleaniq#readme"
+              href="https://github.com/ctabdulhadhi-hue/CLEANIQQQ#readme"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#ff6a3d] rounded px-1"
@@ -359,7 +374,7 @@ export function Landing() {
             Roadmap
           </a>
           <a
-            href="https://github.com/ctabdulhadhi-hue/cleaniq#readme"
+            href="https://github.com/ctabdulhadhi-hue/CLEANIQQQ#readme"
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => setIsMobileMenuOpen(false)}

@@ -13,11 +13,22 @@ interface UseCountUpOptions {
  */
 export function useCountUp(targetValue: number, options: UseCountUpOptions = {}): number {
   const { duration = 600, decimals = 0 } = options;
+
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   const [displayValue, setDisplayValue] = useState<number>(targetValue);
   const prevTargetRef = useRef<number>(targetValue);
   const animFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (prefersReducedMotion || duration <= 0) {
+      prevTargetRef.current = targetValue;
+      return;
+    }
+
     // If targetValue hasn't changed, do not count up on simple re-renders
     if (prevTargetRef.current === targetValue) {
       return;
@@ -25,17 +36,6 @@ export function useCountUp(targetValue: number, options: UseCountUpOptions = {})
 
     const startValue = prevTargetRef.current;
     prevTargetRef.current = targetValue;
-
-    // Respect prefers-reduced-motion
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (prefersReducedMotion || duration <= 0) {
-      setDisplayValue(targetValue);
-      return;
-    }
 
     const startTime = performance.now();
 
@@ -67,7 +67,11 @@ export function useCountUp(targetValue: number, options: UseCountUpOptions = {})
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [targetValue, duration, decimals]);
+  }, [targetValue, duration, decimals, prefersReducedMotion]);
+
+  if (prefersReducedMotion || duration <= 0) {
+    return targetValue;
+  }
 
   return displayValue;
 }

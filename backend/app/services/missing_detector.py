@@ -125,6 +125,11 @@ class MissingValueService:
                     message=f"Cannot compute mean for column '{col_name}': no valid numbers.",
                     status_code=400,
                 )
+            if pd.api.types.is_integer_dtype(result):
+                if fill_val.is_integer():
+                    fill_val = int(fill_val)
+                else:
+                    result = result.astype(float)
             result.loc[mask] = fill_val
 
         elif strategy == "median":
@@ -147,6 +152,11 @@ class MissingValueService:
                     message=f"Cannot compute median for column '{col_name}': no valid numbers.",
                     status_code=400,
                 )
+            if pd.api.types.is_integer_dtype(result):
+                if fill_val.is_integer():
+                    fill_val = int(fill_val)
+                else:
+                    result = result.astype(float)
             result.loc[mask] = fill_val
 
         elif strategy == "mode":
@@ -184,8 +194,11 @@ class MissingValueService:
             if pd.api.types.is_numeric_dtype(series):
                 try:
                     fill_val = float(fill_val)
-                    if pd.api.types.is_integer_dtype(series) and fill_val.is_integer():
-                        fill_val = int(fill_val)
+                    if pd.api.types.is_integer_dtype(series):
+                        if fill_val.is_integer():
+                            fill_val = int(fill_val)
+                        else:
+                            result = result.astype(float)
                 except (ValueError, TypeError):
                     raise AppError(
                         code="TYPE_MISMATCH",

@@ -30,11 +30,13 @@ class ReportGeneratorService:
         quality_before = QualityScoreService.compute(initial_df)
         quality_after = QualityScoreService.compute(current_df)
 
-        # Issues fixed
-        total_affected_rows = sum(rec.affected_row_count for rec.history_step in [session.history] for rec in rec) if False else sum(rec.affected_row_count for rec in session.history)
+        # Issues fixed (scope strictly to active operations up to current_step, excluding undone steps)
+        active_step = getattr(session, "current_step", len(session.history))
+        active_history = session.history[:active_step]
+        total_affected_rows = sum(rec.affected_row_count for rec in active_history)
 
         applied_ops = []
-        for idx, rec in enumerate(session.history, 1):
+        for idx, rec in enumerate(active_history, 1):
             applied_ops.append({
                 "step": idx,
                 "operation": rec.operation,
@@ -50,7 +52,7 @@ class ReportGeneratorService:
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "rows_before": rows_before,
             "rows_after": rows_after,
-            "total_operations": len(session.history),
+            "total_operations": len(active_history),
             "total_affected_rows": total_affected_rows,
             "quality_before": quality_before,
             "quality_after": quality_after,

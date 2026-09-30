@@ -245,10 +245,12 @@ class QualityScoreService:
 
         # ── 6. Date Validity (Invalid dates, Future dates) ───────────────
         date_cols = [c for c in df.columns if classify_column_type(df[c]) == "date" or re.search(r"date|time", str(c), re.IGNORECASE)]
-        now_dt = datetime.now()
+        now_dt = datetime.now(timezone.utc)
+        future_threshold = pd.Timestamp(now_dt) + pd.Timedelta(days=365)
         for d_col in date_cols:
             try:
-                parsed_dates = pd.to_datetime(df[d_col], errors="coerce")
+                # Convert with utc=True to safely parse both timezone-naive and timezone-aware dates
+                parsed_dates = pd.to_datetime(df[d_col], errors="coerce", utc=True)
                 # Check for unparseable dates
                 unparseable_count = int(df[d_col].notna().sum() - parsed_dates.notna().sum())
                 if unparseable_count > 0:
@@ -260,8 +262,8 @@ class QualityScoreService:
                         "count": unparseable_count,
                         "columns": [str(d_col)],
                     })
-                # Check for future dates (e.g. beyond current year + 1)
-                future_dates_count = int((parsed_dates > (now_dt + pd.Timedelta(days=365))).sum())
+                # Check for future dates (e.g. beyond current year + 1) safely in UTC
+                future_dates_count = int((parsed_dates > future_threshold).sum())
                 if future_dates_count > 0:
                     invalid_values_count += future_dates_count
                     issues_list.append({

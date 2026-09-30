@@ -24,23 +24,21 @@ class TextCleanerService:
         Returns the transformed Series and count of affected rows.
         """
         original = series.copy()
-        str_series = series.astype(str)
-        # Keep track of original nulls so we don't convert them to string 'nan'
         null_mask = series.isna()
+        # Keep nulls preserved while treating non-null values as strings for vectorized processing
+        str_series = series.astype(str).where(~null_mask, other=None)
 
         if operation == "trim":
             # Strip outer whitespace and collapse multiple inner spaces
-            transformed = str_series.apply(
-                lambda s: re.sub(r"\s+", " ", s.strip()) if pd.notna(s) else s
-            )
+            transformed = str_series.str.strip().str.replace(r"\s+", " ", regex=True)
 
         elif operation == "case":
             if case_type == "lower":
-                transformed = str_series.apply(lambda s: s.lower() if pd.notna(s) else s)
+                transformed = str_series.str.lower()
             elif case_type == "upper":
-                transformed = str_series.apply(lambda s: s.upper() if pd.notna(s) else s)
+                transformed = str_series.str.upper()
             elif case_type == "title":
-                transformed = str_series.apply(lambda s: s.title() if pd.notna(s) else s)
+                transformed = str_series.str.title()
             else:
                 raise AppError(
                     code="INVALID_CASE_TYPE",
@@ -50,9 +48,7 @@ class TextCleanerService:
 
         elif operation == "remove_special":
             # Remove characters that are not alphanumeric or whitespace
-            transformed = str_series.apply(
-                lambda s: re.sub(r"[^a-zA-Z0-9\s]", "", s) if pd.notna(s) else s
-            )
+            transformed = str_series.str.replace(r"[^a-zA-Z0-9\s]", "", regex=True)
 
         elif operation == "find_replace":
             if find_text is None:
@@ -62,14 +58,7 @@ class TextCleanerService:
                     status_code=400,
                 )
             rep = replace_text or ""
-            if regex:
-                transformed = str_series.apply(
-                    lambda s: re.sub(find_text, rep, s) if pd.notna(s) else s
-                )
-            else:
-                transformed = str_series.apply(
-                    lambda s: s.replace(find_text, rep) if pd.notna(s) else s
-                )
+            transformed = str_series.str.replace(find_text, rep, regex=regex)
 
         else:
             raise AppError(
@@ -78,8 +67,8 @@ class TextCleanerService:
                 status_code=400,
             )
 
-        # Restore original nulls
-        transformed[null_mask] = None
+        # Restore original nulls explicitly
+        transformed.loc[null_mask] = None
 
         # Count differences
         affected_mask = (original.astype(str) != transformed.astype(str)) & (~null_mask)
@@ -119,7 +108,17 @@ class TextCleanerService:
         merged_clusters: List[List[str]] = []
         visited = set()
 
-        keys = list(norm_groups.keys())
+        # If too many distinct normalized keys exist, focus fuzzy matching on the most frequent keys
+        # to avoid O(N^2) CPU hang while preserving exact normalization for all keys
+        if len(norm_groups) > 250:
+            keys = sorted(
+                norm_groups.keys(),
+                key=lambda k: sum(counts.get(v, 0) for v in norm_groups[k]),
+                reverse=True,
+            )[:250]
+        else:
+            keys = list(norm_groups.keys())
+
         for i, k1 in enumerate(keys):
             if k1 in visited:
                 continue
@@ -128,12 +127,23 @@ class TextCleanerService:
 
             # Compare against remaining keys if threshold < 1.0
             if similarity_threshold < 1.0:
+                len1 = len(k1)
+                if len1 == 0:
+                    continue
                 for k2 in keys[i + 1 :]:
                     if k2 in visited:
                         continue
-                    # Compare similarity between the normalized keys
-                    ratio = difflib.SequenceMatcher(None, k1, k2).ratio()
-                    if ratio >= similarity_threshold:
+                    len2 = len(k2)
+                    if len2 == 0:
+                        continue
+                    # Upper bound check: if length difference makes ratio mathematically impossible
+                    if (2.0 * min(len1, len2)) / (len1 + len2) < similarity_threshold:
+                        continue
+                    # Fast SequenceMatcher quick_ratio check before expensive full ratio
+                    matcher = difflib.SequenceMatcher(None, k1, k2)
+                    if matcher.quick_ratio() < similarity_threshold:
+                        continue
+                    if matcher.ratio() >= similarity_threshold:
                         current_cluster.extend(norm_groups[k2])
                         visited.add(k2)
 
@@ -186,7 +196,7 @@ class TextCleanerService:
             return series.copy(), 0
 
         original = series.copy()
-        transformed = series.map(lambda x: mapping.get(x, x) if pd.notna(x) else x)
+        transformed = series.replace(mapping)
 
         affected = int(((original != transformed) & series.notna()).sum())
         return transformed, affected

@@ -146,7 +146,9 @@ export function DataTable({ datasetId, operationLog, refreshKey }: DataTableProp
         if (typeof valA === 'number' && typeof valB === 'number') {
           return (valA - valB) * dir;
         }
-        return String(valA).localeCompare(String(valB)) * dir;
+        const strA = String(valA);
+        const strB = String(valB);
+        return strA < strB ? -dir : strA > strB ? dir : 0;
       });
     }
 

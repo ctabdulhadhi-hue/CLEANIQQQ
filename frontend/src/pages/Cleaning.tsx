@@ -77,11 +77,7 @@ export function Cleaning() {
 
   const [activeTab, setActiveTab] = useState<StudioTab>('nulls-duplicates');
   const [recentDatasets] = useState<RecentDataset[]>(() => getRecentDatasets());
-  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(() => {
-    if (queryId) return queryId;
-    const initialList = getRecentDatasets();
-    return initialList.length > 0 ? initialList[0].dataset_id : null;
-  });
+  const activeDatasetId = queryId || (recentDatasets.length > 0 ? recentDatasets[0].dataset_id : null);
 
   const [profile, setProfile] = useState<DatasetProfileResponse | null>(null);
   const [orderAnalysis, setOrderAnalysis] = useState<OrderIdAnalysisResponse | null>(null);
@@ -279,15 +275,12 @@ export function Cleaning() {
     }
   };
 
-  // Sync activeDatasetId if queryId or recent list changes
+  // Sync default URL query if not present
   useEffect(() => {
-    if (queryId && queryId !== activeDatasetId) {
-      setActiveDatasetId(queryId);
-    } else if (!queryId && recentDatasets.length > 0 && !activeDatasetId) {
-      setActiveDatasetId(recentDatasets[0].dataset_id);
-      setSearchParams({ id: recentDatasets[0].dataset_id });
+    if (!queryId && recentDatasets.length > 0) {
+      setSearchParams({ id: recentDatasets[0].dataset_id }, { replace: true });
     }
-  }, [queryId, activeDatasetId, recentDatasets, setSearchParams]);
+  }, [queryId, recentDatasets, setSearchParams]);
 
   // Load profile + dup preview + op log + suggestions when dataset changes
   useEffect(() => {
@@ -344,7 +337,6 @@ export function Cleaning() {
   }, [activeDatasetId]);
 
   const handleSelectDataset = (id: string) => {
-    setActiveDatasetId(id);
     setSearchParams({ id });
   };
 

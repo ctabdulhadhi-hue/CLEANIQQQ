@@ -1,2 +1,5 @@
-export { TiltCard, SpotlightCard, default } from './TiltCard';
-export type { TiltCardProps } from './TiltCard';
+import { TiltCard, type TiltCardProps } from './TiltCard';
+
+export const SpotlightCard = TiltCard;
+export type { TiltCardProps };
+export default SpotlightCard;

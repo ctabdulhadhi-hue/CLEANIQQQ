@@ -15,6 +15,9 @@ MAX_COMPRESSION_RATIO = 100  # Max ratio of uncompressed to compressed size
 
 ZIP_MAGIC_BYTES = b"PK\x03\x04"
 OLE_MAGIC_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+UTF16_LE_BOM = b"\xff\xfe"
+UTF16_BE_BOM = b"\xfe\xff"
+UTF8_BOM = b"\xef\xbb\xbf"
 
 # Safe default NA values that do NOT include 'NA' (preserving Namibia or valid codes)
 # while recognizing empty strings, NULL, None, NaN, and standard spreadsheet blanks.
@@ -51,8 +54,8 @@ def make_unique_column_names(columns: list) -> List[str]:
     seen: dict[str, int] = {}
     new_cols: List[str] = []
     for i, col in enumerate(columns):
-        if pd.notna(col) and str(col).strip() != "":
-            clean_name = str(col).strip()
+        if pd.notna(col) and str(col).lstrip("\ufeff").strip() != "":
+            clean_name = str(col).lstrip("\ufeff").strip()
         else:
             clean_name = f"column_{i+1}"
 
@@ -148,21 +151,45 @@ def parse_uploaded_file(filename: str, file_bytes: bytes) -> pd.DataFrame:
 
     # Strategy 3: CSV/TSV parsing with encoding & separator fallbacks
     if df is None:
-        # If the file contains null bytes, it is a binary file (not text/CSV)
-        if b"\x00" in file_bytes:
+        is_utf16_le = file_bytes.startswith(UTF16_LE_BOM)
+        is_utf16_be = file_bytes.startswith(UTF16_BE_BOM)
+        has_utf16_bom = is_utf16_le or is_utf16_be
+
+        # If the file contains null bytes and is not UTF-16 with BOM, it is a binary file (not text/CSV)
+        if not has_utf16_bom and b"\x00" in file_bytes:
             raise AppError(
                 code="INVALID_FILE_CONTENT",
                 message=f"Failed to parse '{filename}': file contains binary data and is not a valid CSV or Excel document.",
                 status_code=400,
             )
 
-        encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252", "iso-8859-1"]
+        if is_utf16_le:
+            encodings = ["utf-16", "utf-16-le"]
+        elif is_utf16_be:
+            encodings = ["utf-16", "utf-16-be"]
+        elif file_bytes.startswith(UTF8_BOM):
+            encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252", "iso-8859-1"]
+        else:
+            encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252", "iso-8859-1"]
+
+        # For UTF-16, ensure sample slice boundary is even so we don't truncate mid-character
+        sample_slice_len = min(len(file_bytes), 8192)
+        if has_utf16_bom and sample_slice_len % 2 != 0:
+            sample_slice_len -= 1
+        sample_bytes = file_bytes[:sample_slice_len]
+
         for enc in encodings:
             try:
-                decoded = file_bytes.decode(enc)
-                sample = decoded[:4096]
+                # Test decoding only on the sample bytes to detect encoding
+                sample = sample_bytes.decode(enc)
+                # Strip leading BOM if present in decoded sample text
+                sample = sample.lstrip("\ufeff")
 
-                # Sniff delimiter if possible
+                # If decoded sample has no content after stripping whitespace, it's empty
+                if not sample.strip():
+                    raise pd.errors.EmptyDataError("No columns to parse from file")
+
+                # Sniff delimiter if possible from sample
                 sep = ","
                 if "\t" in sample and sample.count("\t") > sample.count(","):
                     sep = "\t"
@@ -177,15 +204,35 @@ def parse_uploaded_file(filename: str, file_bytes: bytes) -> pd.DataFrame:
                     except Exception:
                         sep = ","
 
-                # Use keep_default_na=False with SAFE_CSV_NA_VALUES to preserve 'NA'
-                df = pd.read_csv(
-                    io.StringIO(decoded),
-                    sep=sep,
-                    keep_default_na=False,
-                    na_values=SAFE_CSV_NA_VALUES,
-                    on_bad_lines="skip",
-                )
+                # Stream directly from BytesIO with encoding to avoid duplicating full file in Python heap strings
+                try:
+                    df = pd.read_csv(
+                        io.BytesIO(file_bytes),
+                        sep=sep,
+                        encoding=enc,
+                        engine="c",
+                        keep_default_na=False,
+                        na_values=SAFE_CSV_NA_VALUES,
+                        on_bad_lines="skip",
+                    )
+                except Exception:
+                    df = pd.read_csv(
+                        io.BytesIO(file_bytes),
+                        sep=sep,
+                        encoding=enc,
+                        engine="python",
+                        keep_default_na=False,
+                        na_values=SAFE_CSV_NA_VALUES,
+                        on_bad_lines="skip",
+                    )
                 break
+            except pd.errors.EmptyDataError as e:
+                parse_errors.append(f"empty: {str(e)}")
+                raise AppError(
+                    code="EMPTY_DATASET",
+                    message=f"Uploaded file '{filename}' contains no readable data rows or columns.",
+                    status_code=400,
+                )
             except Exception as e:
                 parse_errors.append(f"csv ({enc}): {str(e)}")
                 continue

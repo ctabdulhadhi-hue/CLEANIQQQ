@@ -104,21 +104,43 @@ def sanitize_for_spreadsheet(df: pd.DataFrame) -> pd.DataFrame:
     Prevents spreadsheet formula injection (CWE-1236) in exported CSV/Excel files.
     Prefixes text cells starting with '=', '+', '-', '@', '\t', '\r' with a single quote (')
     if the value is text and not a legitimate numeric value.
+    Safely handles formula trigger characters preceded by leading whitespace (spaces, tabs, newlines).
+    Protects object, string, categorical, and text-like columns without corrupting legitimate numbers or nulls.
+    Also sanitizes column headers to prevent injection via column names.
     """
     export_df = df.copy()
     trigger_chars = ("=", "+", "-", "@", "\t", "\r")
+
+    def sanitize_cell(v: Any) -> Any:
+        if isinstance(v, str) and not pd.isna(v):
+            stripped_left = v.lstrip(" \t\r\n")
+            if stripped_left and stripped_left.startswith(trigger_chars):
+                try:
+                    # Legitimate numbers (e.g. "-15.5", " +42 ", "-100", "-0.05") must remain intact
+                    float(v.strip())
+                    return v
+                except ValueError:
+                    return f"'{v}"
+        return v
+
     for col in export_df.columns:
         s = export_df[col]
-        if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
-            def sanitize_cell(v):
-                if isinstance(v, str) and v.startswith(trigger_chars):
-                    try:
-                        float(v)
-                        return v
-                    except ValueError:
-                        return f"'{v}"
-                return v
-            export_df[col] = s.map(sanitize_cell)
+        if (
+            pd.api.types.is_object_dtype(s)
+            or pd.api.types.is_string_dtype(s)
+            or isinstance(s.dtype, pd.CategoricalDtype)
+        ):
+            export_df[col] = s.astype(object).map(sanitize_cell)
+
+    # Sanitize column headers to prevent header injection
+    new_cols = []
+    for c in export_df.columns:
+        if isinstance(c, str):
+            new_cols.append(sanitize_cell(c))
+        else:
+            new_cols.append(c)
+    export_df.columns = new_cols
+
     return export_df
 
 
@@ -683,7 +705,12 @@ async def convert_column_type(
 
     record = OperationRecord(
         operation="convert_type",
-        params={"column": col, "target_type": body.target_type, "date_format": body.date_format},
+        params={
+            "column": col,
+            "target_type": body.target_type,
+            "date_format": body.date_format,
+            "errors_strategy": body.errors_strategy or "coerce",
+        },
         columns_affected=[col],
         affected_row_count=affected,
         rows_before=len(df),

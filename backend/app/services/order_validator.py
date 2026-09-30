@@ -137,13 +137,24 @@ class OrderValidatorService:
         rows_affected = 0
         valid_order_line_count = 0
 
-        # Full column normalized for boolean masking on df
+        # Full column normalized for grouping
         clean_col_series = df[target_col].fillna("").astype(str).str.strip()
+
+        # Pre-group only rows with duplicate IDs to avoid O(N*M) repeated dataframe scanning
+        if not duplicate_ids_series.empty:
+            dup_keys_set = set(duplicate_ids_series.index.astype(str))
+            dup_mask = clean_col_series.isin(dup_keys_set)
+            grouped = df[dup_mask].groupby(clean_col_series[dup_mask], sort=False)
+        else:
+            grouped = None
 
         # We inspect each duplicate ID
         for order_id_val, count in duplicate_ids_series.items():
-            mask = clean_col_series == str(order_id_val)
-            subset = df[mask]
+            str_key = str(order_id_val)
+            if grouped is not None and str_key in grouped.groups:
+                subset = grouped.get_group(str_key)
+            else:
+                subset = df[clean_col_series == str_key]
             occurrences = int(count)
 
             # Check distinct dates
@@ -338,38 +349,50 @@ class OrderValidatorService:
             assigned_map: Dict[Tuple, str] = {}
             new_series = result_df[target_col].copy()
 
-            for idx, val in result_df[target_col].items():
-                s_val = str(val).strip()
-                if s_val in conflicting_ids or pd.isna(val):
-                    d_val = str(result_df.at[idx, date_cols[0]]).strip() if date_cols else ""
-                    c_val = str(result_df.at[idx, customer_cols[0]]).strip() if customer_cols else ""
-                    
-                    key = (s_val, d_val, c_val, idx if not (d_val or c_val) else "")
-                    # If this transaction has not yet received a new unique ID:
-                    if key not in assigned_map:
-                        new_id = f"{use_prefix}{str(curr_counter).zfill(padding)}"
-                        assigned_map[key] = new_id
-                        curr_counter += 1
-                    
-                    new_series.at[idx] = assigned_map[key]
-                    rows_updated += 1
+            # Pre-filter to only iterate over conflicting or null rows
+            if conflicting_ids:
+                conflict_mask = (
+                    result_df[target_col].isna()
+                    | result_df[target_col].astype(str).str.strip().isin(conflicting_ids)
+                )
+            else:
+                conflict_mask = result_df[target_col].isna()
+
+            for idx in result_df.index[conflict_mask]:
+                val = result_df.at[idx, target_col]
+                s_val = str(val).strip() if pd.notna(val) else ""
+                d_val = str(result_df.at[idx, date_cols[0]]).strip() if date_cols else ""
+                c_val = str(result_df.at[idx, customer_cols[0]]).strip() if customer_cols else ""
+
+                key = (s_val, d_val, c_val, idx if not (d_val or c_val) else "")
+                # If this transaction has not yet received a new unique ID:
+                if key not in assigned_map:
+                    new_id = f"{use_prefix}{str(curr_counter).zfill(padding)}"
+                    assigned_map[key] = new_id
+                    curr_counter += 1
+
+                new_series.at[idx] = assigned_map[key]
+                rows_updated += 1
 
             result_df[target_col] = new_series
             log_messages.append(
                 f"Resolved Order ID conflicts: generated new unique Order IDs for {rows_updated} conflicting rows across {len(conflicting_ids)} ambiguous IDs."
             )
 
-        diffs = []
-        for idx in range(len(df)):
-            old_val = str(df.iloc[idx][target_col])
-            new_val = str(result_df.iloc[idx][target_col])
-            if old_val != new_val:
-                diffs.append({
-                    "row_index": idx,
-                    "column": target_col,
-                    "old_value": old_val,
-                    "new_value": new_val,
-                })
+        # Vectorized diff extraction: avoids expensive O(N) df.iloc indexing
+        old_vals = df[target_col].astype(str).to_numpy()
+        new_vals = result_df[target_col].astype(str).to_numpy()
+        changed_mask = old_vals != new_vals
+        changed_positions = np.flatnonzero(changed_mask)
+        diffs = [
+            {
+                "row_index": int(pos),
+                "column": target_col,
+                "old_value": str(old_vals[pos]),
+                "new_value": str(new_vals[pos]),
+            }
+            for pos in changed_positions
+        ]
 
         return result_df, {
             "rows_affected": rows_updated,

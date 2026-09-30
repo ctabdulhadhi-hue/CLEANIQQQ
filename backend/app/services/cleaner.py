@@ -78,20 +78,24 @@ def _generate_diffs(
 
     # If row counts differ (rows were dropped), show which rows were removed
     if len(df_after) < len(df_before):
-        # Find removed row indices
-        if df_after.index.equals(df_before.index[:len(df_after)]):
-            # Rows were dropped from the end or reindexed
-            removed_indices = list(set(df_before.index) - set(df_after.index))
-            for idx in removed_indices[:max_diffs]:
-                for col in columns[:3]:  # Show first 3 columns per removed row
-                    diffs.append(DiffRow(
-                        row_index=int(idx),
-                        column=col,
-                        before=_safe_value(df_before.at[idx, col]) if idx in df_before.index else None,
-                        after=None,
-                    ))
-                    if len(diffs) >= max_diffs:
-                        return diffs
+        # Identify removed rows by checking which indices from df_before are absent in df_after
+        if set(df_after.index).issubset(set(df_before.index)):
+            removed_indices = [idx for idx in df_before.index if idx not in df_after.index]
+        else:
+            # Fallback if df_after was already reset_index
+            removed_indices = list(df_before.index[len(df_after):])
+
+        for idx in removed_indices:
+            row_pos = int(df_before.index.get_loc(idx))
+            for col in columns[:3]:  # Show first 3 columns per removed row
+                diffs.append(DiffRow(
+                    row_index=row_pos,
+                    column=col,
+                    before=_safe_value(df_before.at[idx, col]) if idx in df_before.index else None,
+                    after=None,
+                ))
+                if len(diffs) >= max_diffs:
+                    return diffs
         return diffs
 
     # Same number of rows — compare cell-by-cell

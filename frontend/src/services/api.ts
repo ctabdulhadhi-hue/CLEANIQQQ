@@ -433,6 +433,7 @@ export interface AppApiError extends Error {
   is5xx?: boolean;
   isNetwork?: boolean;
   isTimeout?: boolean;
+  isWaking?: boolean;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -446,7 +447,11 @@ async function handleResponse<T>(res: Response): Promise<T> {
       if (errJson?.error?.message) message = errJson.error.message;
       if (errJson?.error?.code) code = errJson.error.code;
     } catch {
-      if (res.status >= 500) {
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        code = 'BACKEND_WAKING_OR_UNAVAILABLE';
+        message =
+          'CleanIQ backend is waking up or temporarily unavailable (Render Free spin-up). Please wait a few seconds and try again.';
+      } else if (res.status >= 500) {
         message = 'CleanIQ processing server encountered an internal error. Please try again.';
       } else if (res.status === 404) {
         message = 'The requested dataset or resource was not found.';
@@ -459,6 +464,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     err.status = res.status;
     err.is4xx = res.status >= 400 && res.status < 500;
     err.is5xx = res.status >= 500;
+    err.isWaking = code === 'BACKEND_WAKING_OR_UNAVAILABLE';
     throw err;
   }
   return res.json();
@@ -504,13 +510,33 @@ export async function checkBackendHealth(
       if (!res.ok) {
         const error = new Error(`Health check returned HTTP ${res.status}`) as AppApiError;
         error.status = res.status;
-        error.code = `HTTP_${res.status}`;
+        if (res.status === 502 || res.status === 503 || res.status === 504) {
+          error.code = 'BACKEND_WAKING_OR_UNAVAILABLE';
+          error.message =
+            'CleanIQ backend is waking up or temporarily unavailable (Render Free spin-up). Please wait a few moments...';
+          error.isWaking = true;
+        } else {
+          error.code = `HTTP_${res.status}`;
+        }
         error.is5xx = res.status >= 500;
         error.is4xx = res.status >= 400 && res.status < 500;
         throw error;
       }
 
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        const parseErr = new Error(
+          'Backend returned a non-JSON response during startup. Server may still be booting.'
+        ) as AppApiError;
+        parseErr.code = 'BACKEND_WAKING_OR_UNAVAILABLE';
+        parseErr.status = res.status;
+        parseErr.is5xx = true;
+        parseErr.isWaking = true;
+        throw parseErr;
+      }
+
       if (!data || typeof data !== 'object' || data.status !== 'ok') {
         throw new Error(`Unexpected health payload: ${JSON.stringify(data)}`);
       }
@@ -563,14 +589,10 @@ export async function checkBackendHealth(
 
     // 2. Fallback to production cloud backend so local frontend remains 100% usable
     const prodTarget = import.meta.env.VITE_API_URL || 'https://cleaniqqq.onrender.com';
-    try {
-      const prodRes = await ping(prodTarget, timeoutMs);
-      if (prodRes && prodRes.status === 'ok') {
-        setApiBaseUrl(prodTarget);
-        return prodRes;
-      }
-    } catch (err: any) {
-      throw err;
+    const prodRes = await ping(prodTarget, timeoutMs);
+    if (prodRes && prodRes.status === 'ok') {
+      setApiBaseUrl(prodTarget);
+      return prodRes;
     }
   }
 
@@ -580,46 +602,128 @@ export async function checkBackendHealth(
 
 // ─── Upload ──────────────────────────────────────────────────────────────────
 
+export interface UploadOptions {
+  onProgress?: (progressPercent: number) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export async function uploadDataset(
   file: File,
-  onProgress?: (progressPercent: number) => void,
+  onProgressOrOptions?: ((progressPercent: number) => void) | UploadOptions,
 ): Promise<DatasetUploadResponse> {
+  const options: UploadOptions =
+    typeof onProgressOrOptions === 'function'
+      ? { onProgress: onProgressOrOptions }
+      : (onProgressOrOptions || {});
+
+  const onProgress = options.onProgress;
+  const signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? 120_000; // 2-minute bounded timeout for free tier
+
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const abortErr = new Error('Upload aborted by user') as AppApiError;
+      abortErr.code = 'ABORTED';
+      return reject(abortErr);
+    }
+
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append('file', file);
 
     xhr.open('POST', `${API_BASE}/api/v1/datasets`);
+    xhr.timeout = timeoutMs;
+
+    const onAbort = () => {
+      try {
+        xhr.abort();
+      } catch {
+        // Ignore abort errors
+      }
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     if (xhr.upload && onProgress) {
       xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 90);
+        if (event.lengthComputable && event.total > 0) {
+          // Reserve 90-100% for backend validation & schema parsing
+          const percent = Math.min(90, Math.round((event.loaded / event.total) * 90));
           onProgress(percent);
         }
       };
     }
 
     xhr.onload = () => {
-      if (onProgress) onProgress(100);
+      if (signal) signal.removeEventListener('abort', onAbort);
       try {
-        const responseData = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300) {
+        let responseData: any = null;
+        try {
+          responseData = JSON.parse(xhr.responseText);
+        } catch {
+          // Server returned HTML error (e.g. Render 502/504 gateway response)
+        }
+
+        if (xhr.status >= 200 && xhr.status < 300 && responseData) {
+          if (onProgress) onProgress(100);
           resolve(responseData as DatasetUploadResponse);
         } else {
-          const code = responseData?.error?.code || `HTTP_${xhr.status}`;
-          const message = responseData?.error?.message || 'File upload failed';
-          const err = new Error(message);
-          (err as any).code = code;
+          let code = responseData?.error?.code || `HTTP_${xhr.status}`;
+          let message = responseData?.error?.message;
+
+          if (!message) {
+            if (xhr.status === 413) {
+              code = 'FILE_TOO_LARGE';
+              message = 'File exceeds maximum allowed upload size (50MB).';
+            } else if (xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
+              code = 'BACKEND_WAKING_OR_UNAVAILABLE';
+              message = "CleanIQ server is waking up or temporarily unavailable on Render Free. Please retry in a few moments.";
+            } else {
+              message = xhr.statusText || `File upload failed with status ${xhr.status}.`;
+            }
+          }
+
+          const err = new Error(message) as AppApiError;
+          err.code = code;
+          err.status = xhr.status;
+          err.is5xx = xhr.status >= 500;
+          err.is4xx = xhr.status >= 400 && xhr.status < 500;
           reject(err);
         }
-      } catch (e) {
-        reject(new Error(xhr.statusText || 'Unable to parse server response'));
+      } catch (e: any) {
+        const err = new Error(e?.message || 'Unable to parse server response') as AppApiError;
+        err.code = 'PARSE_ERROR';
+        reject(err);
       }
     };
 
+    xhr.ontimeout = () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      const err = new Error(
+        `Upload timed out after ${Math.round(timeoutMs / 1000)}s waiting for server response. The free-tier backend may be waking up. Please retry.`
+      ) as AppApiError;
+      err.code = 'TIMEOUT_ERROR';
+      err.isTimeout = true;
+      err.isNetwork = true;
+      reject(err);
+    };
+
+    xhr.onabort = () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      const err = new Error('Upload cancelled by user') as AppApiError;
+      err.code = 'ABORTED';
+      reject(err);
+    };
+
     xhr.onerror = () => {
-      reject(new Error('Network error during file upload. Check if backend is running.'));
+      if (signal) signal.removeEventListener('abort', onAbort);
+      const err = new Error('Network error during file upload. Check if backend is running.') as AppApiError;
+      err.code = 'NETWORK_ERROR';
+      err.isNetwork = true;
+      reject(err);
     };
 
     xhr.send(formData);

@@ -30,34 +30,26 @@ export function Dashboard() {
   const navigate = useNavigate();
   const backend = useBackendStatus();
 
-  const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
+  const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>(() => getRecentDatasets());
   const [qualityData, setQualityData] = useState<QualityScoreResponse | null>(null);
-
 
   useEffect(() => {
     let isMounted = true;
 
-    const datasets = getRecentDatasets();
-    setRecentDatasets(datasets);
-
-    const loadQuality = (targetId: string) => {
-      getQualityScore(targetId)
+    if (recentDatasets.length > 0) {
+      getQualityScore(recentDatasets[0].dataset_id)
         .then((q) => {
           if (isMounted) setQualityData(q);
         })
         .catch(() => {
           if (isMounted) setQualityData(null);
         });
-    };
-
-    if (datasets.length > 0) {
-      loadQuality(datasets[0].dataset_id);
     }
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [recentDatasets]);
 
   const reloadQuality = (datasetId?: string) => {
     const id = datasetId || recentDatasets[0]?.dataset_id;

@@ -66,11 +66,13 @@ class ReplayEngine:
               col = params.get("column")
               target_type = params.get("target_type")
               date_format = params.get("date_format")
+              errors_strategy = params.get("errors_strategy", "coerce")
               if col and col in result_df.columns and target_type:
                   converted_series, _, _ = TypeDetectorService.convert_type(
                       series=result_df[col],
                       target_type=target_type,
                       date_format=date_format,
+                      errors_strategy=errors_strategy,
                   )
                   result_df[col] = converted_series
 

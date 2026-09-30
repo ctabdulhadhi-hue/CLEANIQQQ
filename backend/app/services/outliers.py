@@ -213,11 +213,10 @@ class OutlierDetectorService:
         full_numeric = pd.to_numeric(df[column], errors="coerce")
 
         if action == "remove":
-            lower = bounds["lower"]
-            upper = bounds["upper"]
-            mask = (full_numeric >= lower) & (full_numeric <= upper) | df[column].isna()
-            result_df = df[mask].reset_index(drop=True)
-            affected = outlier_count
+            outlier_idx_set = set(detection["outlier_indices"])
+            keep_mask = ~df.index.isin(outlier_idx_set)
+            result_df = df[keep_mask].reset_index(drop=True)
+            affected = len(outlier_idx_set)
             summary = f"Removed {affected} outlier row(s) using {method.upper()} method"
 
         elif action == "cap":
@@ -225,10 +224,12 @@ class OutlierDetectorService:
             lower = bounds["lower"]
             upper = bounds["upper"]
             capped = full_numeric.clip(lower=lower, upper=upper)
-            # Only update non-null positions
-            non_null_mask = df[column].notna()
-            result_df.loc[non_null_mask, column] = capped[non_null_mask]
-            affected = outlier_count
+            # Only update positions that were explicitly flagged as outliers
+            outlier_idx_set = set(detection["outlier_indices"])
+            if outlier_idx_set:
+                outlier_mask = df.index.isin(outlier_idx_set)
+                result_df.loc[outlier_mask, column] = capped[outlier_mask]
+            affected = len(outlier_idx_set)
             summary = f"Capped {affected} outlier(s) to bounds [{lower:.2f}, {upper:.2f}] using {method.upper()}"
 
         elif action == "keep":

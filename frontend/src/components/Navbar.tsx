@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ShieldCheck, Activity } from 'lucide-react';
+import { ShieldCheck, Activity, Menu } from 'lucide-react';
 
 interface NavbarProps {
   backendConnected: boolean | null;
@@ -8,6 +8,8 @@ interface NavbarProps {
   status?: 'checking' | 'waking' | 'online' | 'offline' | 'ready' | 'failed';
   statusMessage?: string;
   onCheckStatus?: () => void;
+  mobileNavOpen?: boolean;
+  onToggleMobileNav?: () => void;
 }
 
 export function Navbar({
@@ -15,6 +17,8 @@ export function Navbar({
   activeSessions = 0,
   status,
   onCheckStatus,
+  mobileNavOpen = false,
+  onToggleMobileNav,
 }: NavbarProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -55,32 +59,46 @@ export function Navbar({
       case 'online':
         return 'Backend Online';
       case 'waking':
-        return 'Waking up server...';
+        return 'Waking server...';
       case 'checking':
-        return 'Checking backend...';
+        return 'Checking...';
       case 'offline':
-        return 'Backend Unavailable';
+        return 'Backend Offline';
     }
   };
 
   return (
-    <header className="h-16 border-b border-[rgba(255,255,255,0.08)] bg-[#0c0c0e]/90 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-40">
-      <button
-        type="button"
-        id="app-navbar-logo-btn"
-        onClick={handleLogoClick}
-        className="flex items-center gap-3 cursor-pointer group hover:opacity-90 hover:brightness-105 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d] bg-transparent border-none p-0 text-left rounded"
-        aria-label="CleanIQ Logo Navigation"
-      >
-        <img
-          src="/logo-dark-bg.svg"
-          alt="CleanIQ"
-          className="h-8 w-auto object-contain transition-transform duration-150 group-hover:scale-[1.02]"
-        />
-        <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-[#ff6a3d]/10 text-[#ffb08a] border border-[#ff6a3d]/25 hidden sm:inline-block">
-          v1.0-alpha
-        </span>
-      </button>
+    <header className="h-16 border-b border-[rgba(255,255,255,0.08)] bg-[#0c0c0e]/90 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between sticky top-0 z-40">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {onToggleMobileNav && (
+          <button
+            type="button"
+            id="mobile-nav-toggle-btn"
+            onClick={onToggleMobileNav}
+            className="md:hidden p-2 rounded-lg text-[#8a8a86] hover:text-[#f2f2f0] hover:bg-white/[0.04] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d]"
+            aria-label={mobileNavOpen ? 'Close navigation drawer' : 'Open navigation drawer'}
+            aria-expanded={mobileNavOpen}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
+        <button
+          type="button"
+          id="app-navbar-logo-btn"
+          onClick={handleLogoClick}
+          className="flex items-center gap-2 sm:gap-3 cursor-pointer group hover:opacity-90 hover:brightness-105 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6a3d] bg-transparent border-none p-0 text-left rounded shrink-0"
+          aria-label="CleanIQ Logo Navigation"
+        >
+          <img
+            src="/logo-dark-bg.svg"
+            alt="CleanIQ"
+            className="h-7 sm:h-8 w-auto object-contain transition-transform duration-150 group-hover:scale-[1.02]"
+          />
+          <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-[#ff6a3d]/10 text-[#ffb08a] border border-[#ff6a3d]/25 hidden sm:inline-block">
+            v1.0-alpha
+          </span>
+        </button>
+      </div>
 
       <div className="flex items-center gap-4">
         {/* Core Principle Badge */}

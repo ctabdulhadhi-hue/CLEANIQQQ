@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import type { ReactNode, ComponentPropsWithoutRef } from 'react';
 
 interface MagneticButtonProps extends ComponentPropsWithoutRef<'div'> {
@@ -15,15 +15,13 @@ export function MagneticButton({
 }: MagneticButtonProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isHovered, setIsHovered] = useState(false);
-  const [isEnabled, setIsEnabled] = useState(false);
-  const buttonRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Only enable on desktop with fine pointer (not touch) and without reduced motion
+  const [isEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
     const hasFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    setIsEnabled(hasFinePointer && !prefersReducedMotion);
-  }, []);
+    return hasFinePointer && !prefersReducedMotion;
+  });
+  const buttonRef = useRef<HTMLDivElement>(null);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isEnabled || !buttonRef.current) return;

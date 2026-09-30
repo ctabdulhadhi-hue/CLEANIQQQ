@@ -97,6 +97,19 @@ const fragmentShader = /* glsl */ `
   }
 `;
 
+function isWebGLAvailable(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const Particles: React.FC<ParticlesProps> = ({
   particleCount = 65,
   particleSpread = 12,
@@ -115,13 +128,17 @@ export const Particles: React.FC<ParticlesProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [reducedMotion, setReducedMotion] = useState(false);
-  const [webGlSupported, setWebGlSupported] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  });
+  const [webGlSupported, setWebGlSupported] = useState<boolean>(() => isWebGLAvailable());
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReducedMotion(mq.matches);
-
     const handleMotionChange = (e: MediaQueryListEvent) => {
       setReducedMotion(e.matches);
     };
@@ -131,7 +148,7 @@ export const Particles: React.FC<ParticlesProps> = ({
   }, []);
 
   useEffect(() => {
-    if (reducedMotion) return;
+    if (reducedMotion || !webGlSupported) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -248,9 +265,14 @@ export const Particles: React.FC<ParticlesProps> = ({
         if (container.contains(gl.canvas)) {
           container.removeChild(gl.canvas);
         }
+        try {
+          gl.getExtension('WEBGL_lose_context')?.loseContext();
+        } catch {
+          // ignore cleanup errors
+        }
       };
     } catch {
-      setWebGlSupported(false);
+      queueMicrotask(() => setWebGlSupported(false));
     }
   }, [
     particleCount,
@@ -266,6 +288,7 @@ export const Particles: React.FC<ParticlesProps> = ({
     pixelRatio,
     particleColors,
     reducedMotion,
+    webGlSupported,
   ]);
 
   // If reduced motion is preferred or WebGL unsupported, render static brand radial glow

@@ -9,7 +9,9 @@ client = TestClient(app)
 def test_health_directly():
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok"}
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["app"] == "CleanIQ API"
 
 
 def test_full_pipeline_upload_clean_export():

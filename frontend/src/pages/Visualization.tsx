@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   BarChart3,
@@ -49,8 +49,8 @@ export function Visualization() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryId = searchParams.get('id');
 
-  const [recentDatasets, setRecentDatasets] = useState<RecentDataset[]>([]);
-  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(queryId);
+  const [recentDatasets] = useState<RecentDataset[]>(() => getRecentDatasets());
+  const activeDatasetId = queryId || (recentDatasets.length > 0 ? recentDatasets[0].dataset_id : null);
 
   const [stats, setStats] = useState<ColumnStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,13 +71,10 @@ export function Visualization() {
   const [chartError, setChartError] = useState<string | null>(null);
 
   useEffect(() => {
-    const list = getRecentDatasets();
-    setRecentDatasets(list);
-    if (!queryId && list.length > 0) {
-      setActiveDatasetId(list[0].dataset_id);
-      setSearchParams({ id: list[0].dataset_id });
+    if (!queryId && recentDatasets.length > 0) {
+      setSearchParams({ id: recentDatasets[0].dataset_id }, { replace: true });
     }
-  }, [queryId, setSearchParams]);
+  }, [queryId, recentDatasets, setSearchParams]);
 
   useEffect(() => {
     if (!activeDatasetId) return;
@@ -111,7 +108,7 @@ export function Visualization() {
   }, [activeDatasetId]);
 
   // Handle Chart Generation
-  const fetchChartData = async () => {
+  const fetchChartData = useCallback(async () => {
     if (!activeDatasetId || !primaryColumn) return;
     setChartLoading(true);
     setChartError(null);
@@ -136,16 +133,18 @@ export function Visualization() {
     } finally {
       setChartLoading(false);
     }
-  };
+  }, [activeDatasetId, primaryColumn, secondaryColumn, chartType]);
 
   useEffect(() => {
     if (stats && primaryColumn) {
-      fetchChartData();
+      const timer = setTimeout(() => {
+        void fetchChartData();
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [primaryColumn, chartType, activeDatasetId]);
+  }, [stats, primaryColumn, fetchChartData]);
 
   const handleSelectDataset = (id: string) => {
-    setActiveDatasetId(id);
     setSearchParams({ id });
   };
 

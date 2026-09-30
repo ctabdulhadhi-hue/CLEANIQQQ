@@ -1,4 +1,4 @@
-import { useState, useRef, type DragEvent, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UploadCloud,
@@ -30,6 +30,40 @@ export function Upload() {
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [error, setError] = useState<{ code?: string; message: string; isNetwork?: boolean } | null>(null);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const serverWaitTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clean up timers and in-flight upload on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (serverWaitTimerRef.current) {
+        clearInterval(serverWaitTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCancelUpload = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (serverWaitTimerRef.current) {
+      clearInterval(serverWaitTimerRef.current);
+      serverWaitTimerRef.current = null;
+    }
+    setUploading(false);
+    setProgress(0);
+    setStatusMessage('');
+    setError({
+      code: 'ABORTED',
+      message: 'Upload cancelled by user. You can choose or drop another file anytime.',
+    });
+  };
+
   const validateFile = (file: File): string | null => {
     const name = file.name.toLowerCase();
     const hasValidExt = ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
@@ -59,18 +93,60 @@ export function Upload() {
       return;
     }
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    if (serverWaitTimerRef.current) {
+      clearInterval(serverWaitTimerRef.current);
+      serverWaitTimerRef.current = null;
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setSelectedFile(file);
     setUploading(true);
     setProgress(15);
     setStatusMessage('Reading and transferring file...');
 
+    let waitTicks = 0;
     try {
-      const response = await uploadDataset(file, (pct) => {
-        setProgress(pct);
-        if (pct >= 85) {
-          setStatusMessage('Validating magic bytes & parsing tabular data...');
-        }
+      const response = await uploadDataset(file, {
+        signal: controller.signal,
+        onProgress: (pct) => {
+          setProgress(pct);
+          if (pct >= 85) {
+            setStatusMessage('Validating magic bytes & parsing tabular data...');
+            // When upload stream completes (90%), start reassuring phase updates
+            if (!serverWaitTimerRef.current) {
+              serverWaitTimerRef.current = setInterval(() => {
+                waitTicks++;
+                if (waitTicks <= 3) {
+                  setStatusMessage('Validating magic bytes & inspecting schema...');
+                  setProgress((p) => Math.max(p, 91));
+                } else if (waitTicks <= 8) {
+                  setStatusMessage('Parsing tabular data & building session store...');
+                  setProgress((p) => Math.max(p, 92));
+                } else if (waitTicks <= 15) {
+                  setStatusMessage('Profiling dataset columns & detecting types...');
+                  setProgress((p) => Math.max(p, 93));
+                } else if (waitTicks <= 30) {
+                  setStatusMessage('Processing dataset... (Render free tier may take up to 60s on cold start)');
+                  setProgress((p) => Math.max(p, 94));
+                } else {
+                  setStatusMessage('Still processing... thank you for your patience with free-tier hosting.');
+                  setProgress((p) => Math.max(p, 95));
+                }
+              }, 1000);
+            }
+          }
+        },
       });
+
+      if (serverWaitTimerRef.current) {
+        clearInterval(serverWaitTimerRef.current);
+        serverWaitTimerRef.current = null;
+      }
 
       setProgress(100);
       setStatusMessage('Dataset parsed! Opening Dataset Explorer...');
@@ -90,15 +166,29 @@ export function Upload() {
         navigate(`/dataset?id=${encodeURIComponent(response.dataset_id)}`);
       }, 700);
     } catch (err: any) {
+      if (serverWaitTimerRef.current) {
+        clearInterval(serverWaitTimerRef.current);
+        serverWaitTimerRef.current = null;
+      }
       setUploading(false);
       setProgress(0);
       setStatusMessage('');
-      const isNetwork = err.message?.toLowerCase().includes('network') || !err.code || err.code === 'UPLOAD_FAILED';
+
+      if (err.code === 'ABORTED') {
+        return;
+      }
+
+      const isNetwork =
+        err.isNetwork ||
+        err.message?.toLowerCase().includes('network') ||
+        err.code === 'TIMEOUT_ERROR' ||
+        err.code === 'BACKEND_WAKING_OR_UNAVAILABLE' ||
+        err.code === 'UPLOAD_FAILED';
+
       setError({
         code: err.code || 'UPLOAD_FAILED',
-        message: isNetwork
-          ? "Network error during file upload. CleanIQ's processing server is temporarily unavailable. Please click 'Retry Upload' or check connection."
-          : (err.message || 'File upload failed. Please verify file integrity and try again.'),
+        message:
+          err.message || 'File upload failed. Please verify file integrity and try again.',
         isNetwork,
       });
     }
@@ -308,9 +398,18 @@ export function Upload() {
               />
             </div>
 
-            <p className="text-[11px] text-[#8a8a86] text-left animate-pulse">
-              {statusMessage || 'Processing dataset...'}
-            </p>
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <p className="text-[11px] text-[#8a8a86] text-left animate-pulse truncate flex-1">
+                {statusMessage || 'Processing dataset...'}
+              </p>
+              <button
+                type="button"
+                onClick={handleCancelUpload}
+                className="text-[11px] font-medium text-zinc-400 hover:text-white px-2 py-0.5 rounded border border-white/10 hover:border-white/20 bg-white/5 transition-colors shrink-0 cursor-pointer pointer-events-auto"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>
