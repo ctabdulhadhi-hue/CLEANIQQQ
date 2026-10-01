@@ -39,6 +39,15 @@ export function DataTable({ datasetId, operationLog, refreshKey }: DataTableProp
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [internalOpLog, setInternalOpLog] = useState<OperationLogEntry[]>([]);
+  const [manualRefreshKey, setManualRefreshKey] = useState<number>(0);
+
+  // Reset pagination, search, sorting, and old data when dataset changes
+  useEffect(() => {
+    setData(null);
+    setPage(1);
+    setSearchQuery('');
+    setSortConfig({ column: null, direction: null });
+  }, [datasetId]);
 
   // Fetch operation log if not passed via props
   useEffect(() => {
@@ -70,19 +79,23 @@ export function DataTable({ datasetId, operationLog, refreshKey }: DataTableProp
     return cols;
   }, [effectiveOpLog]);
 
-  // Fetch paginated preview when datasetId, page, size, or refreshKey changes
+  // Fetch paginated preview when datasetId, page, size, refreshKey, or manualRefreshKey changes
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const fetchPreview = async () => {
       setLoading(true);
       setError(null);
       try {
-        const preview = await getDatasetPreview(datasetId, page, size);
+        const preview = await getDatasetPreview(datasetId, page, size, controller.signal);
         if (!cancelled) {
           setData(preview);
         }
       } catch (err: any) {
+        if (err.name === 'AbortError' || err.code === 'ABORTED') {
+          return;
+        }
         if (!cancelled) {
           setError(err.message || 'Failed to load preview rows');
         }
@@ -99,8 +112,13 @@ export function DataTable({ datasetId, operationLog, refreshKey }: DataTableProp
 
     return () => {
       cancelled = true;
+      try {
+        controller.abort();
+      } catch {
+        // ignore
+      }
     };
-  }, [datasetId, page, size, refreshKey]);
+  }, [datasetId, page, size, refreshKey, manualRefreshKey]);
 
   // Handle header click for sorting
   const handleSort = (column: string) => {
@@ -254,8 +272,7 @@ export function DataTable({ datasetId, operationLog, refreshKey }: DataTableProp
 
           <button
             onClick={() => {
-              // Trigger reload
-              setPage((p) => p);
+              setManualRefreshKey((k) => k + 1);
             }}
             disabled={loading}
             title="Refresh preview"

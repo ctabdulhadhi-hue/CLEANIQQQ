@@ -758,8 +758,8 @@ export async function loadSampleDataset(): Promise<DatasetUploadResponse> {
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
-export async function getDatasetProfile(datasetId: string): Promise<DatasetProfileResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/profile`);
+export async function getDatasetProfile(datasetId: string, signal?: AbortSignal): Promise<DatasetProfileResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/profile`, { signal });
   return handleResponse<DatasetProfileResponse>(res);
 }
 
@@ -769,16 +769,17 @@ export async function getDatasetPreview(
   datasetId: string,
   page: number = 1,
   size: number = 100,
+  signal?: AbortSignal,
 ): Promise<DatasetPreviewResponse> {
   const url = `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/preview?page=${page}&size=${size}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   return handleResponse<DatasetPreviewResponse>(res);
 }
 
 // ─── Column Stats ────────────────────────────────────────────────────────────
 
-export async function getColumnStats(datasetId: string): Promise<ColumnStatsResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/stats`);
+export async function getColumnStats(datasetId: string, signal?: AbortSignal): Promise<ColumnStatsResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/stats`, { signal });
   return handleResponse<ColumnStatsResponse>(res);
 }
 
@@ -791,6 +792,7 @@ export async function cleanMissing(
   value?: any,
   preview: boolean = true,
   null_markers?: string[],
+  signal?: AbortSignal,
 ): Promise<CleanOperationResponse> {
   const url = `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/missing?preview=${preview}`;
   const body: any = { column, method };
@@ -800,6 +802,7 @@ export async function cleanMissing(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   return handleResponse<CleanOperationResponse>(res);
 }
@@ -817,6 +820,7 @@ export async function cleanDuplicates(
   datasetId: string,
   preview: boolean = true,
   options?: CleanDuplicatesOptions,
+  signal?: AbortSignal,
 ): Promise<CleanOperationResponse> {
   const url = `${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/duplicates?preview=${preview}`;
   const body = options || {};
@@ -824,14 +828,15 @@ export async function cleanDuplicates(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   return handleResponse<CleanOperationResponse>(res);
 }
 
 // ─── Operation Log ───────────────────────────────────────────────────────────
 
-export async function getOperationLog(datasetId: string): Promise<OperationLogResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/operations`);
+export async function getOperationLog(datasetId: string, signal?: AbortSignal): Promise<OperationLogResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/operations`, { signal });
   return handleResponse<OperationLogResponse>(res);
 }
 
@@ -846,8 +851,8 @@ export async function rollbackLastOperation(datasetId: string): Promise<any> {
 
 // ─── Module 1: Data Type Conversion API ──────────────────────────────────────
 
-export async function getTypeSuggestions(datasetId: string): Promise<TypeSuggestionsResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/type-suggestions`);
+export async function getTypeSuggestions(datasetId: string, signal?: AbortSignal): Promise<TypeSuggestionsResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/clean/type-suggestions`, { signal });
   return handleResponse<TypeSuggestionsResponse>(res);
 }
 
@@ -1083,10 +1088,11 @@ export async function analyzeDatasetWithAI(datasetId: string): Promise<AIAnalysi
 
 export async function getOrderIdAnalysis(
   datasetId: string,
-  column?: string
+  column?: string,
+  signal?: AbortSignal
 ): Promise<OrderIdAnalysisResponse> {
   const query = column ? `?column=${encodeURIComponent(column)}` : '';
-  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/order-ids/analysis${query}`);
+  const res = await fetch(`${API_BASE}/api/v1/datasets/${encodeURIComponent(datasetId)}/order-ids/analysis${query}`, { signal });
   return handleResponse<OrderIdAnalysisResponse>(res);
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   Wand2,
@@ -83,6 +83,17 @@ export function Cleaning() {
   const [orderAnalysis, setOrderAnalysis] = useState<OrderIdAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [datasetVersion, setDatasetVersion] = useState(0);
+
+  // Background non-blocking analysis loaders
+  const [typeSuggestionsLoading, setTypeSuggestionsLoading] = useState(false);
+  const [orderAnalysisLoading, setOrderAnalysisLoading] = useState(false);
+  const [dupPreviewLoading, setDupPreviewLoading] = useState(false);
+
+  // In-memory caches per dataset_id to avoid redundant expensive computations
+  const typeSuggestionsCache = useRef<Record<string, TypeSuggestion[]>>({});
+  const orderAnalysisCache = useRef<Record<string, OrderIdAnalysisResponse>>({});
+  const dupPreviewCache = useRef<Record<string, CleanOperationResponse>>({});
 
   // Missing values state
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
@@ -107,7 +118,8 @@ export function Cleaning() {
   const [targetType, setTargetType] = useState<string>('integer');
   const [dateFormat, setDateFormat] = useState<string>('');
   const [typePreview, setTypePreview] = useState<CleanOperationResponse | null>(null);
-  const [typeOperating, setTypeOperating] = useState(false);
+  const [typePreviewing, setTypePreviewing] = useState(false);
+  const [typeApplying, setTypeApplying] = useState(false);
   const [typeResult, setTypeResult] = useState<string | null>(null);
 
   // ─── Module 2: Text Cleaning & Standardization State ─────────────────────
@@ -118,7 +130,8 @@ export function Cleaning() {
   const [replaceText, setReplaceText] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [textPreview, setTextPreview] = useState<CleanOperationResponse | null>(null);
-  const [textOperating, setTextOperating] = useState(false);
+  const [textPreviewing, setTextPreviewing] = useState(false);
+  const [textApplying, setTextApplying] = useState(false);
   const [textResult, setTextResult] = useState<string | null>(null);
 
   // Near-duplicate clustering state
@@ -127,7 +140,8 @@ export function Cleaning() {
   const [clustersLoading, setClustersLoading] = useState(false);
   const [selectedMerges, setSelectedMerges] = useState<Record<string, boolean>>({});
   const [standardizePreview, setStandardizePreview] = useState<CleanOperationResponse | null>(null);
-  const [standardizeOperating, setStandardizeOperating] = useState(false);
+  const [standardizePreviewing, setStandardizePreviewing] = useState(false);
+  const [standardizeApplying, setStandardizeApplying] = useState(false);
   const [standardizeResult, setStandardizeResult] = useState<string | null>(null);
 
   // ─── Module 3: Column Management State ────────────────────────────────────
@@ -136,14 +150,18 @@ export function Cleaning() {
   const [colDeleteTarget, setColDeleteTarget] = useState<string>('');
   const [colOrderList, setColOrderList] = useState<string[]>([]);
   const [colMgmtPreview, setColMgmtPreview] = useState<CleanOperationResponse | null>(null);
-  const [colMgmtOperating, setColMgmtOperating] = useState(false);
+  const [colRenamePreviewing, setColRenamePreviewing] = useState(false);
+  const [colRenameApplying, setColRenameApplying] = useState(false);
+  const [colDeleteApplying, setColDeleteApplying] = useState(false);
+  const [colReorderApplying, setColReorderApplying] = useState(false);
   const [colMgmtResult, setColMgmtResult] = useState<string | null>(null);
 
   // Calculated column state
   const [calcColName, setCalcColName] = useState('');
   const [calcExpression, setCalcExpression] = useState('');
   const [calcPreview, setCalcPreview] = useState<CleanOperationResponse | null>(null);
-  const [calcOperating, setCalcOperating] = useState(false);
+  const [calcPreviewing, setCalcPreviewing] = useState(false);
+  const [calcApplying, setCalcApplying] = useState(false);
   const [calcResult, setCalcResult] = useState<string | null>(null);
 
   // ─── Module 4: Outlier Detection State ────────────────────────────────────
@@ -155,6 +173,7 @@ export function Cleaning() {
   const [outlierDetectRes, setOutlierDetectRes] = useState<OutlierDetectResponse | null>(null);
   const [outlierPreview, setOutlierPreview] = useState<CleanOperationResponse | null>(null);
   const [outlierDetecting, setOutlierDetecting] = useState(false);
+  const [outlierPreviewing, setOutlierPreviewing] = useState(false);
   const [outlierApplying, setOutlierApplying] = useState(false);
   const [outlierResult, setOutlierResult] = useState<string | null>(null);
 
@@ -243,7 +262,11 @@ export function Cleaning() {
 
   const handleOutlierAction = async (previewMode: boolean) => {
     if (!activeDatasetId || !outlierCol) return;
-    setOutlierApplying(true);
+    if (previewMode) {
+      setOutlierPreviewing(true);
+    } else {
+      setOutlierApplying(true);
+    }
     setError(null);
     try {
       const res = await handleOutliers(
@@ -262,16 +285,17 @@ export function Cleaning() {
       } else {
         setOutlierPreview(null);
         setOutlierResult(res.after_summary);
-        const fresh = await getDatasetProfile(activeDatasetId);
-        setProfile(fresh);
-        const logs = await getOperationLog(activeDatasetId);
-        setOpLog(logs.entries);
         setOutlierDetectRes(null);
+        await refreshAfterOperation();
       }
     } catch (err: any) {
       setError(err.message || 'Outlier handling failed');
     } finally {
-      setOutlierApplying(false);
+      if (previewMode) {
+        setOutlierPreviewing(false);
+      } else {
+        setOutlierApplying(false);
+      }
     }
   };
 
@@ -282,84 +306,228 @@ export function Cleaning() {
     }
   }, [queryId, recentDatasets, setSearchParams]);
 
-  // Load profile + dup preview + op log + suggestions when dataset changes
+  // Fast Core Refresh after any operation (only fetches profile & logs, updates version)
+  const refreshAfterOperation = useCallback(
+    async (options?: { refreshDuplicates?: boolean; refreshTypes?: boolean; refreshOrders?: boolean }) => {
+      if (!activeDatasetId) return;
+
+      // Bump version immediately to trigger DataTable live rows refetch
+      setDatasetVersion((v) => v + 1);
+
+      try {
+        // Fast core profile & operation log
+        const [profileData, logData] = await Promise.all([
+          getDatasetProfile(activeDatasetId),
+          getOperationLog(activeDatasetId),
+        ]);
+
+        setProfile(profileData);
+        setOpLog(logData.entries);
+        setColOrderList(profileData.columns.map((c) => c.name));
+
+        // Invalidate stale caches for this modified dataset
+        delete typeSuggestionsCache.current[activeDatasetId];
+        delete orderAnalysisCache.current[activeDatasetId];
+        delete dupPreviewCache.current[activeDatasetId];
+
+        // 1. Duplicates: fast-path if 0 duplicates
+        if (profileData.duplicate_row_count === 0) {
+          const zeroDup: CleanOperationResponse = {
+            affected_rows: 0,
+            before_summary: `${profileData.row_count} rows, 0 duplicate rows`,
+            after_summary: 'All rows in this dataset are unique',
+            operation_id: null,
+          };
+          dupPreviewCache.current[activeDatasetId] = zeroDup;
+          setDupPreview(zeroDup);
+        } else if (options?.refreshDuplicates || activeTab === 'nulls-duplicates') {
+          setDupPreviewLoading(true);
+          cleanDuplicates(activeDatasetId, true)
+            .then((dupData) => {
+              dupPreviewCache.current[activeDatasetId] = dupData;
+              setDupPreview(dupData);
+            })
+            .catch(() => {})
+            .finally(() => setDupPreviewLoading(false));
+        }
+
+        // 2. Type suggestions in background
+        if (options?.refreshTypes || activeTab === 'type-conversion') {
+          setTypeSuggestionsLoading(true);
+          getTypeSuggestions(activeDatasetId)
+            .then((typeData) => {
+              typeSuggestionsCache.current[activeDatasetId] = typeData.suggestions;
+              setTypeSuggestions(typeData.suggestions);
+            })
+            .catch(() => {})
+            .finally(() => setTypeSuggestionsLoading(false));
+        }
+
+        // 3. Order ID analysis in background
+        if (options?.refreshOrders || activeTab === 'order-ids') {
+          setOrderAnalysisLoading(true);
+          getOrderIdAnalysis(activeDatasetId)
+            .then((orderData) => {
+              if (orderData) {
+                orderAnalysisCache.current[activeDatasetId] = orderData;
+                setOrderAnalysis(orderData);
+              }
+            })
+            .catch(() => {})
+            .finally(() => setOrderAnalysisLoading(false));
+        }
+      } catch (err: any) {
+        // Keep UI working even if background refresh had temporary glitch
+        console.warn('Dataset refresh encountered an error:', err);
+      }
+    },
+    [activeDatasetId, activeTab]
+  );
+
+  // Load dataset when activeDatasetId changes with request cancellation & progressive rendering
   useEffect(() => {
     if (!activeDatasetId) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    const signal = controller.signal;
 
-    const load = async () => {
+    const loadDataset = async () => {
       setLoading(true);
       setError(null);
       setMissingPreview(null);
       setMissingResult(null);
-      setDupPreview(null);
       setDupResult(null);
       setSelectedColumn(null);
       setTypePreview(null);
+      setTypeResult(null);
       setTextPreview(null);
+      setTextResult(null);
       setStandardizePreview(null);
+      setStandardizeResult(null);
       setCalcPreview(null);
+      setCalcResult(null);
+      setOutlierPreview(null);
+      setOutlierResult(null);
+
+      // Check caches first for instant display
+      if (typeSuggestionsCache.current[activeDatasetId]) {
+        setTypeSuggestions(typeSuggestionsCache.current[activeDatasetId]);
+      } else {
+        setTypeSuggestions([]);
+      }
+
+      if (orderAnalysisCache.current[activeDatasetId]) {
+        setOrderAnalysis(orderAnalysisCache.current[activeDatasetId]);
+      } else {
+        setOrderAnalysis(null);
+      }
+
+      if (dupPreviewCache.current[activeDatasetId]) {
+        setDupPreview(dupPreviewCache.current[activeDatasetId]);
+      } else {
+        setDupPreview(null);
+      }
 
       try {
-        const [profileData, dupData, logData, typeData, orderData] = await Promise.all([
-          getDatasetProfile(activeDatasetId),
-          cleanDuplicates(activeDatasetId, true),
-          getOperationLog(activeDatasetId),
-          getTypeSuggestions(activeDatasetId).catch(() => ({ dataset_id: activeDatasetId, suggestions: [] })),
-          getOrderIdAnalysis(activeDatasetId).catch(() => null),
+        // Phase 1: Core profile & operation log (fast, unblocks workspace tabs immediately)
+        const [profileData, logData] = await Promise.all([
+          getDatasetProfile(activeDatasetId, signal),
+          getOperationLog(activeDatasetId, signal),
         ]);
-        if (!cancelled) {
-          setProfile(profileData);
-          setDupPreview(dupData);
-          setOpLog(logData.entries);
-          setTypeSuggestions(typeData.suggestions);
-          setOrderAnalysis(orderData);
-          setColOrderList(profileData.columns.map((c) => c.name));
-          if (profileData.columns.length > 0) {
-            setSelectedTypeCol(profileData.columns[0].name);
-            setTextCol(profileData.columns[0].name);
-            setClusterCol(profileData.columns[0].name);
-            setColRenameOld(profileData.columns[0].name);
-            setColDeleteTarget(profileData.columns[0].name);
-          }
+
+        if (signal.aborted) return;
+
+        setProfile(profileData);
+        setOpLog(logData.entries);
+        setColOrderList(profileData.columns.map((c) => c.name));
+
+        if (profileData.columns.length > 0) {
+          setSelectedTypeCol((prev) => (prev && profileData.columns.some((c) => c.name === prev) ? prev : profileData.columns[0].name));
+          setTextCol((prev) => (prev && profileData.columns.some((c) => c.name === prev) ? prev : profileData.columns[0].name));
+          setClusterCol((prev) => (prev && profileData.columns.some((c) => c.name === prev) ? prev : profileData.columns[0].name));
+          setColRenameOld((prev) => (prev && profileData.columns.some((c) => c.name === prev) ? prev : profileData.columns[0].name));
+          setColDeleteTarget((prev) => (prev && profileData.columns.some((c) => c.name === prev) ? prev : profileData.columns[0].name));
+        }
+
+        // UNBLOCK STUDIO IMMEDIATELY: Workspace layout and controls are now fully interactive
+        setLoading(false);
+
+        // Phase 2: Non-blocking background analyses
+        // 2a. Duplicate detection (skip backend scan entirely if 0 duplicates in profile!)
+        if (profileData.duplicate_row_count === 0) {
+          const zeroDup: CleanOperationResponse = {
+            affected_rows: 0,
+            before_summary: `${profileData.row_count} rows, 0 duplicate rows`,
+            after_summary: 'All rows in this dataset are unique',
+            operation_id: null,
+          };
+          dupPreviewCache.current[activeDatasetId] = zeroDup;
+          setDupPreview(zeroDup);
+        } else if (!dupPreviewCache.current[activeDatasetId]) {
+          setDupPreviewLoading(true);
+          cleanDuplicates(activeDatasetId, true, undefined, signal)
+            .then((dupData) => {
+              if (!signal.aborted) {
+                dupPreviewCache.current[activeDatasetId] = dupData;
+                setDupPreview(dupData);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              if (!signal.aborted) setDupPreviewLoading(false);
+            });
+        }
+
+        // 2b. Type suggestions in background
+        if (!typeSuggestionsCache.current[activeDatasetId]) {
+          setTypeSuggestionsLoading(true);
+          getTypeSuggestions(activeDatasetId, signal)
+            .then((typeData) => {
+              if (!signal.aborted) {
+                typeSuggestionsCache.current[activeDatasetId] = typeData.suggestions;
+                setTypeSuggestions(typeData.suggestions);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              if (!signal.aborted) setTypeSuggestionsLoading(false);
+            });
+        }
+
+        // 2c. Order ID analysis in background
+        if (!orderAnalysisCache.current[activeDatasetId]) {
+          setOrderAnalysisLoading(true);
+          getOrderIdAnalysis(activeDatasetId, undefined, signal)
+            .then((orderData) => {
+              if (!signal.aborted && orderData) {
+                orderAnalysisCache.current[activeDatasetId] = orderData;
+                setOrderAnalysis(orderData);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              if (!signal.aborted) setOrderAnalysisLoading(false);
+            });
         }
       } catch (err: any) {
-        if (!cancelled) setError(err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (signal.aborted) return;
+        setError(err.message || 'Failed to load dataset workspace');
+        setLoading(false);
       }
     };
 
-    load();
+    loadDataset();
+
     return () => {
-      cancelled = true;
+      try {
+        controller.abort();
+      } catch {
+        // ignore
+      }
     };
   }, [activeDatasetId]);
 
   const handleSelectDataset = (id: string) => {
     setSearchParams({ id });
-  };
-
-  // Refresh dataset and logs
-  const refreshAll = async () => {
-    if (!activeDatasetId) return;
-    try {
-      const [profileData, dupData, logData, typeData, orderData] = await Promise.all([
-        getDatasetProfile(activeDatasetId),
-        cleanDuplicates(activeDatasetId, true),
-        getOperationLog(activeDatasetId),
-        getTypeSuggestions(activeDatasetId).catch(() => ({ dataset_id: activeDatasetId, suggestions: [] })),
-        getOrderIdAnalysis(activeDatasetId).catch(() => null),
-      ]);
-      setProfile(profileData);
-      setDupPreview(dupData);
-      setOpLog(logData.entries);
-      setTypeSuggestions(typeData.suggestions);
-      setOrderAnalysis(orderData);
-      setColOrderList(profileData.columns.map((c) => c.name));
-    } catch {
-      // silently fail refresh
-    }
   };
 
   // ─── Missing Values Actions ──────────────────────────────────────────────
@@ -388,7 +556,7 @@ export function Cleaning() {
       const result = await cleanMissing(activeDatasetId, selectedColumn, fillMethod, val, false);
       setMissingResult(`✅ Applied: ${result.after_summary}`);
       setMissingPreview(null);
-      await refreshAll();
+      await refreshAfterOperation();
     } catch (err: any) {
       setMissingResult(`❌ Failed: ${err.message}`);
     } finally {
@@ -405,7 +573,7 @@ export function Cleaning() {
       const result = await cleanDuplicates(activeDatasetId, false);
       setDupResult(`✅ ${result.after_summary}`);
       setDupPreview(null);
-      await refreshAll();
+      await refreshAfterOperation({ refreshDuplicates: true });
     } catch (err: any) {
       setDupResult(`❌ Failed: ${err.message}`);
     } finally {
@@ -417,7 +585,7 @@ export function Cleaning() {
 
   const handlePreviewTypeConversion = async () => {
     if (!activeDatasetId || !selectedTypeCol) return;
-    setTypeOperating(true);
+    setTypePreviewing(true);
     setTypePreview(null);
     setTypeResult(null);
     try {
@@ -434,13 +602,13 @@ export function Cleaning() {
     } catch (err: any) {
       setTypeResult(`❌ Error: ${err.message}`);
     } finally {
-      setTypeOperating(false);
+      setTypePreviewing(false);
     }
   };
 
   const handleApplyTypeConversion = async () => {
     if (!activeDatasetId || !selectedTypeCol) return;
-    setTypeOperating(true);
+    setTypeApplying(true);
     try {
       const result = await convertColumnType(
         activeDatasetId,
@@ -453,11 +621,11 @@ export function Cleaning() {
       );
       setTypeResult(`✅ Applied: ${result.after_summary}`);
       setTypePreview(null);
-      await refreshAll();
+      await refreshAfterOperation({ refreshTypes: true });
     } catch (err: any) {
       setTypeResult(`❌ Failed: ${err.message}`);
     } finally {
-      setTypeOperating(false);
+      setTypeApplying(false);
     }
   };
 
@@ -465,7 +633,7 @@ export function Cleaning() {
 
   const handlePreviewTextTransform = async () => {
     if (!activeDatasetId || !textCol) return;
-    setTextOperating(true);
+    setTextPreviewing(true);
     setTextPreview(null);
     setTextResult(null);
     try {
@@ -485,13 +653,13 @@ export function Cleaning() {
     } catch (err: any) {
       setTextResult(`❌ Error: ${err.message}`);
     } finally {
-      setTextOperating(false);
+      setTextPreviewing(false);
     }
   };
 
   const handleApplyTextTransform = async () => {
     if (!activeDatasetId || !textCol) return;
-    setTextOperating(true);
+    setTextApplying(true);
     try {
       const result = await transformText(
         activeDatasetId,
@@ -507,11 +675,11 @@ export function Cleaning() {
       );
       setTextResult(`✅ Applied: ${result.after_summary}`);
       setTextPreview(null);
-      await refreshAll();
+      await refreshAfterOperation();
     } catch (err: any) {
       setTextResult(`❌ Failed: ${err.message}`);
     } finally {
-      setTextOperating(false);
+      setTextApplying(false);
     }
   };
 
@@ -552,7 +720,7 @@ export function Cleaning() {
       return;
     }
 
-    setStandardizeOperating(true);
+    setStandardizePreviewing(true);
     setStandardizePreview(null);
     try {
       const result = await standardizeCategories(
@@ -567,7 +735,7 @@ export function Cleaning() {
     } catch (err: any) {
       setStandardizeResult(`❌ Error: ${err.message}`);
     } finally {
-      setStandardizeOperating(false);
+      setStandardizePreviewing(false);
     }
   };
 
@@ -580,7 +748,7 @@ export function Cleaning() {
         variants: c.variants.map((v) => v.value),
       }));
 
-    setStandardizeOperating(true);
+    setStandardizeApplying(true);
     try {
       const result = await standardizeCategories(
         activeDatasetId,
@@ -593,11 +761,11 @@ export function Cleaning() {
       setStandardizeResult(`✅ Applied: ${result.after_summary}`);
       setStandardizePreview(null);
       setClusters([]);
-      await refreshAll();
+      await refreshAfterOperation();
     } catch (err: any) {
       setStandardizeResult(`❌ Failed: ${err.message}`);
     } finally {
-      setStandardizeOperating(false);
+      setStandardizeApplying(false);
     }
   };
 
@@ -605,7 +773,11 @@ export function Cleaning() {
 
   const handleRenameColumn = async (preview: boolean) => {
     if (!activeDatasetId || !colRenameOld || !colRenameNew.trim()) return;
-    setColMgmtOperating(true);
+    if (preview) {
+      setColRenamePreviewing(true);
+    } else {
+      setColRenameApplying(true);
+    }
     setColMgmtResult(null);
     try {
       const res = await renameColumn(activeDatasetId, colRenameOld, colRenameNew.trim(), preview);
@@ -615,18 +787,22 @@ export function Cleaning() {
         setColMgmtResult(`✅ ${res.after_summary}`);
         setColMgmtPreview(null);
         setColRenameNew('');
-        await refreshAll();
+        await refreshAfterOperation({ refreshTypes: true });
       }
     } catch (err: any) {
       setColMgmtResult(`❌ Error: ${err.message}`);
     } finally {
-      setColMgmtOperating(false);
+      if (preview) {
+        setColRenamePreviewing(false);
+      } else {
+        setColRenameApplying(false);
+      }
     }
   };
 
   const handleDeleteColumn = async (preview: boolean) => {
     if (!activeDatasetId || !colDeleteTarget) return;
-    setColMgmtOperating(true);
+    setColDeleteApplying(true);
     setColMgmtResult(null);
     try {
       const res = await deleteColumn(activeDatasetId, colDeleteTarget, preview);
@@ -635,12 +811,12 @@ export function Cleaning() {
       } else {
         setColMgmtResult(`✅ ${res.after_summary}`);
         setColMgmtPreview(null);
-        await refreshAll();
+        await refreshAfterOperation({ refreshTypes: true });
       }
     } catch (err: any) {
       setColMgmtResult(`❌ Error: ${err.message}`);
     } finally {
-      setColMgmtOperating(false);
+      setColDeleteApplying(false);
     }
   };
 
@@ -655,21 +831,21 @@ export function Cleaning() {
 
   const handleApplyReorder = async () => {
     if (!activeDatasetId) return;
-    setColMgmtOperating(true);
+    setColReorderApplying(true);
     try {
       const res = await reorderColumns(activeDatasetId, colOrderList, false);
       setColMgmtResult(`✅ ${res.after_summary}`);
-      await refreshAll();
+      await refreshAfterOperation();
     } catch (err: any) {
       setColMgmtResult(`❌ Failed: ${err.message}`);
     } finally {
-      setColMgmtOperating(false);
+      setColReorderApplying(false);
     }
   };
 
   const handlePreviewCalculatedColumn = async () => {
     if (!activeDatasetId || !calcColName.trim() || !calcExpression.trim()) return;
-    setCalcOperating(true);
+    setCalcPreviewing(true);
     setCalcPreview(null);
     setCalcResult(null);
     try {
@@ -678,24 +854,24 @@ export function Cleaning() {
     } catch (err: any) {
       setCalcResult(`❌ Calculation error: ${err.message}`);
     } finally {
-      setCalcOperating(false);
+      setCalcPreviewing(false);
     }
   };
 
   const handleApplyCalculatedColumn = async () => {
     if (!activeDatasetId || !calcColName.trim() || !calcExpression.trim()) return;
-    setCalcOperating(true);
+    setCalcApplying(true);
     try {
       const res = await createCalculatedColumn(activeDatasetId, calcColName.trim(), calcExpression.trim(), false);
       setCalcResult(`✅ Created: ${res.after_summary}`);
       setCalcPreview(null);
       setCalcColName('');
       setCalcExpression('');
-      await refreshAll();
+      await refreshAfterOperation({ refreshTypes: true });
     } catch (err: any) {
       setCalcResult(`❌ Failed: ${err.message}`);
     } finally {
-      setCalcOperating(false);
+      setCalcApplying(false);
     }
   };
 
@@ -705,7 +881,7 @@ export function Cleaning() {
     if (!activeDatasetId) return;
     try {
       await rollbackLastOperation(activeDatasetId);
-      await refreshAll();
+      await refreshAfterOperation({ refreshDuplicates: true, refreshTypes: true, refreshOrders: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -977,7 +1153,9 @@ export function Cleaning() {
         >
           <Hash className="w-3.5 h-3.5" />
           <span>Order ID Integrity</span>
-          {orderAnalysis?.has_conflict ? (
+          {orderAnalysisLoading ? (
+            <span className="w-2 h-2 rounded-full bg-[#ff6a3d] animate-pulse" title="Analyzing Order IDs..." />
+          ) : orderAnalysis?.has_conflict ? (
             <span className="px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-bold">
               Conflict!
             </span>
@@ -998,11 +1176,13 @@ export function Cleaning() {
         >
           <Binary className="w-3.5 h-3.5" />
           <span>Type Conversion</span>
-          {typeSuggestions.length > 0 && (
+          {typeSuggestionsLoading ? (
+            <span className="w-2 h-2 rounded-full bg-[#ff6a3d] animate-pulse" title="Checking suggestions..." />
+          ) : typeSuggestions.length > 0 ? (
             <span className="px-1.5 py-0.5 rounded-full bg-[#ff6a3d]/15 text-[#ffb08a] text-[10px]">
               {typeSuggestions.length} suggestions
             </span>
-          )}
+          ) : null}
         </button>
 
         <button
@@ -1042,21 +1222,38 @@ export function Cleaning() {
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
+      {loading && !profile ? (
+        <div className="rounded-[16px] bg-white/[0.03] border border-[rgba(255,255,255,0.08)] flex flex-col items-center justify-center py-20 space-y-3">
           <Loader2 className="w-8 h-8 text-[#ff6a3d] animate-spin" />
+          <p className="text-sm font-semibold text-white">Loading Cleaning Studio...</p>
+          <p className="text-xs text-[#8a8a86]">Preparing dataset profile and preview</p>
         </div>
       ) : (
         <>
           {/* TAB: ORDER IDS & INTEGRITY */}
           {activeTab === 'order-ids' && (
             <div className="space-y-6">
-              {activeDatasetId && (
+              {orderAnalysisLoading ? (
+                <div className="rounded-[16px] bg-white/[0.03] border border-[rgba(255,255,255,0.08)] p-8 text-center space-y-3">
+                  <Loader2 className="w-6 h-6 text-[#ff6a3d] animate-spin mx-auto" />
+                  <p className="text-sm font-semibold text-white">Analyzing Order ID Integrity...</p>
+                  <p className="text-xs text-[#8a8a86]">Scanning for duplicate keys, multi-line transactions, and cross-date conflicts.</p>
+                </div>
+              ) : activeDatasetId && orderAnalysis && orderAnalysis.order_id_column ? (
                 <OrderIdConflictCard
                   datasetId={activeDatasetId}
                   analysis={orderAnalysis}
-                  onRefresh={() => refreshAll()}
+                  onRefresh={() => refreshAfterOperation({ refreshOrders: true })}
                 />
+              ) : (
+                <div className="rounded-[16px] bg-white/[0.03] border border-[rgba(255,255,255,0.08)] p-8 text-center space-y-3">
+                  <Hash className="w-8 h-8 text-[#ff6a3d] mx-auto opacity-70" />
+                  <p className="text-sm font-semibold text-white">No Order ID Column Detected</p>
+                  <p className="text-xs text-[#8a8a86] max-w-md mx-auto">
+                    CleanIQ searches for common Order / Invoice identifier columns (e.g., Order ID, Invoice No, Transaction ID).
+                    Your dataset columns are clean or do not have a recognizable order identifier.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -1248,7 +1445,13 @@ export function Cleaning() {
                 </div>
 
                 <div className="p-5 space-y-4 flex-1">
-                  {dupPreview && dupPreview.affected_rows === 0 ? (
+                  {dupPreviewLoading ? (
+                    <div className="text-center py-8 space-y-2">
+                      <Loader2 className="w-8 h-8 text-[#ff6a3d] animate-spin mx-auto" />
+                      <p className="text-sm text-slate-300 font-medium">Checking Duplicate Rows...</p>
+                      <p className="text-xs text-[#8a8a86]">Evaluating records for identical values</p>
+                    </div>
+                  ) : dupPreview && dupPreview.affected_rows === 0 ? (
                     <div className="text-center py-8 space-y-2">
                       <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
                       <p className="text-sm text-emerald-400 font-medium">No Duplicates</p>
@@ -1344,7 +1547,13 @@ export function Cleaning() {
                   </div>
                 </div>
 
-                {typeSuggestions.length === 0 ? (
+                {typeSuggestionsLoading ? (
+                  <div className="text-center py-8 space-y-2 border border-dashed border-[rgba(255,255,255,0.08)] rounded-xl">
+                    <Loader2 className="w-6 h-6 text-[#ff6a3d] animate-spin mx-auto" />
+                    <p className="text-sm text-slate-300 font-medium">Analyzing column data types...</p>
+                    <p className="text-xs text-[#7a7a75]">Inspecting sample values and format patterns</p>
+                  </div>
+                ) : typeSuggestions.length === 0 ? (
                   <div className="text-center py-8 space-y-2 border border-dashed border-[rgba(255,255,255,0.08)] rounded-xl">
                     <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
                     <p className="text-sm text-slate-300 font-medium">All columns have optimal types</p>
@@ -1451,10 +1660,10 @@ export function Cleaning() {
                   <button
                     type="button"
                     onClick={handlePreviewTypeConversion}
-                    disabled={typeOperating}
+                    disabled={typePreviewing || typeApplying}
                     className="w-full px-4 py-2.5 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-2"
                   >
-                    {typeOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                    {typePreviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                     <span>Preview Conversion</span>
                   </button>
 
@@ -1470,10 +1679,10 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={handleApplyTypeConversion}
-                        disabled={typeOperating}
+                        disabled={typeApplying || typePreviewing}
                         className="w-full px-4 py-2.5 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center justify-center gap-2"
                       >
-                        {typeOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        {typeApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                         <span>Approve & Apply Conversion</span>
                       </button>
                     </div>
@@ -1599,10 +1808,10 @@ export function Cleaning() {
                   <button
                     type="button"
                     onClick={handlePreviewTextTransform}
-                    disabled={textOperating || (textOp === 'find_replace' && !findText)}
+                    disabled={textPreviewing || textApplying || (textOp === 'find_replace' && !findText)}
                     className="w-full px-4 py-2.5 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-2"
                   >
-                    {textOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                    {textPreviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                     <span>Preview Text Transform</span>
                   </button>
 
@@ -1618,10 +1827,10 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={handleApplyTextTransform}
-                        disabled={textOperating || textPreview.affected_rows === 0}
+                        disabled={textApplying || textPreviewing || textPreview.affected_rows === 0}
                         className="w-full px-4 py-2.5 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center justify-center gap-2"
                       >
-                        {textOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        {textApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                         <span>Approve & Apply Text Transform</span>
                       </button>
                     </div>
@@ -1724,10 +1933,10 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={handlePreviewStandardize}
-                        disabled={standardizeOperating}
+                        disabled={standardizePreviewing || standardizeApplying}
                         className="w-full px-4 py-2.5 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-2"
                       >
-                        {standardizeOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                        {standardizePreviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                         <span>Preview Cluster Merge</span>
                       </button>
 
@@ -1743,10 +1952,10 @@ export function Cleaning() {
                           <button
                             type="button"
                             onClick={handleApplyStandardize}
-                            disabled={standardizeOperating || standardizePreview.affected_rows === 0}
+                            disabled={standardizeApplying || standardizePreviewing || standardizePreview.affected_rows === 0}
                             className="w-full px-4 py-2.5 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center justify-center gap-2"
                           >
-                            {standardizeOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            {standardizeApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                             <span>Confirm & Merge Values</span>
                           </button>
                         </div>
@@ -1806,18 +2015,20 @@ export function Cleaning() {
                     <button
                       type="button"
                       onClick={() => handleRenameColumn(true)}
-                      disabled={colMgmtOperating || !colRenameNew.trim()}
-                      className="flex-1 px-3 py-2 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all"
+                      disabled={colRenamePreviewing || colRenameApplying || !colRenameNew.trim()}
+                      className="flex-1 px-3 py-2 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-1.5"
                     >
-                      Preview Rename
+                      {colRenamePreviewing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Preview Rename</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleRenameColumn(false)}
-                      disabled={colMgmtOperating || !colRenameNew.trim()}
-                      className="flex-1 px-3 py-2 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all"
+                      disabled={colRenameApplying || colRenamePreviewing || !colRenameNew.trim()}
+                      className="flex-1 px-3 py-2 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center justify-center gap-1.5"
                     >
-                      Apply Rename
+                      {colRenameApplying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Apply Rename</span>
                     </button>
                   </div>
                 </div>
@@ -1838,10 +2049,10 @@ export function Cleaning() {
                     <button
                       type="button"
                       onClick={() => handleDeleteColumn(false)}
-                      disabled={colMgmtOperating || (profile?.columns.length || 0) <= 1}
+                      disabled={colDeleteApplying || (profile?.columns.length || 0) <= 1}
                       className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shrink-0 flex items-center gap-1.5"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      {colDeleteApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                       <span>Delete</span>
                     </button>
                   </div>
@@ -1854,10 +2065,11 @@ export function Cleaning() {
                     <button
                       type="button"
                       onClick={handleApplyReorder}
-                      disabled={colMgmtOperating}
-                      className="px-3 py-1.5 rounded-lg bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all"
+                      disabled={colReorderApplying}
+                      className="px-3 py-1.5 rounded-lg bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center gap-1.5"
                     >
-                      Save Order
+                      {colReorderApplying && <Loader2 className="w-3 h-3 animate-spin" />}
+                      <span>Save Order</span>
                     </button>
                   </div>
 
@@ -1984,10 +2196,10 @@ export function Cleaning() {
                   <button
                     type="button"
                     onClick={handlePreviewCalculatedColumn}
-                    disabled={calcOperating || !calcColName.trim() || !calcExpression.trim()}
+                    disabled={calcPreviewing || calcApplying || !calcColName.trim() || !calcExpression.trim()}
                     className="w-full px-4 py-2.5 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-2"
                   >
-                    {calcOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                    {calcPreviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                     <span>Preview Calculated Column</span>
                   </button>
 
@@ -2024,10 +2236,10 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={handleApplyCalculatedColumn}
-                        disabled={calcOperating}
+                        disabled={calcApplying || calcPreviewing}
                         className="w-full px-4 py-2.5 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center justify-center gap-2"
                       >
-                        {calcOperating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        {calcApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                         <span>Approve & Create Column</span>
                       </button>
                     </div>
@@ -2164,10 +2376,11 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={() => handleOutlierAction(true)}
-                        disabled={outlierApplying}
-                        className="px-4 py-2 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all"
+                        disabled={outlierPreviewing || outlierApplying}
+                        className="px-4 py-2 rounded-xl border border-[rgba(255,255,255,0.15)] hover:bg-white/5 text-[#f2f2f0] text-xs font-medium transition-all flex items-center justify-center gap-1.5"
                       >
-                        Preview Action
+                        {outlierPreviewing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>Preview Action</span>
                       </button>
                     </div>
                   </div>
@@ -2198,7 +2411,7 @@ export function Cleaning() {
                       <button
                         type="button"
                         onClick={() => handleOutlierAction(false)}
-                        disabled={outlierApplying}
+                        disabled={outlierApplying || outlierPreviewing}
                         className="px-4 py-2 rounded-xl bg-[#ff6a3d] hover:bg-[#ff7b50] text-[#0c0c0e] text-xs font-bold transition-all flex items-center gap-2"
                       >
                         {outlierApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
@@ -2278,7 +2491,7 @@ export function Cleaning() {
           <DataTable
             datasetId={activeDatasetId}
             operationLog={opLog}
-            refreshKey={opLog.length}
+            refreshKey={datasetVersion + opLog.length}
           />
         </div>
       )}
